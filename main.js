@@ -14,6 +14,7 @@ function createWindow() {
     minWidth: 860,
     minHeight: 600,
     title: "Vault Reader",
+    icon: path.join(__dirname, "app-icon.ico"),
     backgroundColor: "#f4f5f2",
     autoHideMenuBar: true,
     show: false,

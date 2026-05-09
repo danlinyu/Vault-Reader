@@ -65,3 +65,4 @@ npm run build:portable
 ## Notes
 
 Vault Reader keeps notes as normal Markdown files on disk. There is no private database.
+The portable builds do not register Windows file associations automatically; use Windows "Open with" for `.md` files, or add an optional installer/registration script later.

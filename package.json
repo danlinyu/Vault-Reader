@@ -37,6 +37,7 @@
       "winCodeSign": null
     },
     "files": [
+      "app-icon.ico",
       "app.js",
       "favicon.svg",
       "index.html",
@@ -46,6 +47,7 @@
       "vendor/**/*"
     ],
     "win": {
+      "icon": "app-icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {
