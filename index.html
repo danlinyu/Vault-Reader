@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vault Reader</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./vendor/purify.min.js"></script>
+    <script defer src="./vendor/marked.min.js"></script>
+    <script defer src="./vendor/lucide.min.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-view="preview">
+      <nav class="rail" aria-label="Primary actions">
+        <button class="icon-button is-active" id="openFolderButton" type="button" title="Open folder" aria-label="Open folder">
+          <i data-lucide="folder-open"></i>
+        </button>
+        <button class="icon-button" id="openFilesButton" type="button" title="Open files" aria-label="Open files">
+          <i data-lucide="file-up"></i>
+        </button>
+        <button class="icon-button" id="newNoteButton" type="button" title="New note" aria-label="New note">
+          <i data-lucide="file-plus"></i>
+        </button>
+        <button class="icon-button" id="quickOpenButton" type="button" title="Quick switcher" aria-label="Quick switcher">
+          <i data-lucide="search"></i>
+        </button>
+        <span class="rail-spacer"></span>
+        <button class="icon-button" id="toggleThemeButton" type="button" title="Toggle theme" aria-label="Toggle theme">
+          <i data-lucide="sun"></i>
+        </button>
+      </nav>
+
+      <aside class="sidebar" id="sidebar">
+        <header class="sidebar-header">
+          <div class="vault-heading">
+            <span class="eyebrow">Vault</span>
+            <h1 id="vaultName">Reader</h1>
+          </div>
+          <button class="icon-button quiet" id="collapseSidebarButton" type="button" title="Toggle sidebar" aria-label="Toggle sidebar">
+            <i data-lucide="panel-left-close"></i>
+          </button>
+        </header>
+
+        <label class="search-field" for="fileSearch">
+          <i data-lucide="search"></i>
+          <input id="fileSearch" type="search" autocomplete="off" placeholder="Search notes" />
+        </label>
+
+        <div class="sidebar-status">
+          <span id="fileCount">0 notes</span>
+          <span id="indexStatus">Ready</span>
+        </div>
+
+        <div class="file-tree" id="fileTree" role="tree" aria-label="Markdown files"></div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="note-heading">
+            <div class="note-title" id="noteTitle">Welcome</div>
+            <div class="note-path" id="notePath">No local file selected</div>
+          </div>
+          <div class="topbar-actions">
+            <button class="save-button" id="saveButton" type="button" title="Save note" aria-label="Save note">
+              <i data-lucide="save"></i>
+              <span id="saveState">Saved</span>
+            </button>
+            <div class="segmented" role="group" aria-label="View mode">
+              <button type="button" class="segment is-active" data-view-mode="preview">Preview</button>
+              <button type="button" class="segment" data-view-mode="split">Split</button>
+              <button type="button" class="segment" data-view-mode="source">Source</button>
+            </div>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <section class="source-pane" aria-label="Source">
+            <textarea id="sourceText" spellcheck="true"></textarea>
+          </section>
+          <article class="preview-pane" aria-label="Preview">
+            <div class="markdown-body" id="markdownView"></div>
+          </article>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <section class="inspector-section">
+          <h2>Outline</h2>
+          <nav class="outline" id="outline"></nav>
+        </section>
+
+        <section class="inspector-section">
+          <h2>Details</h2>
+          <dl class="details-list">
+            <div>
+              <dt>Words</dt>
+              <dd id="wordCount">0</dd>
+            </div>
+            <div>
+              <dt>Read</dt>
+              <dd id="readingTime">0 min</dd>
+            </div>
+            <div>
+              <dt>Links</dt>
+              <dd id="linkCount">0</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="inspector-section">
+          <h2>Linked mentions</h2>
+          <div class="backlinks" id="backlinks"></div>
+        </section>
+      </aside>
+    </div>
+
+    <div class="quick-open" id="quickOpen" hidden>
+      <div class="quick-panel" role="dialog" aria-modal="true" aria-label="Quick switcher">
+        <label class="search-field quick-search" for="quickSearch">
+          <i data-lucide="search"></i>
+          <input id="quickSearch" type="search" autocomplete="off" placeholder="Open note" />
+        </label>
+        <div class="quick-results" id="quickResults"></div>
+      </div>
+    </div>
+
+    <div class="note-dialog" id="noteDialog" hidden>
+      <form class="note-dialog-panel" id="noteForm" role="dialog" aria-modal="true" aria-labelledby="noteDialogTitle">
+        <h2 id="noteDialogTitle">New note</h2>
+        <label class="note-name-field" for="noteNameInput">
+          <span>Name</span>
+          <input id="noteNameInput" type="text" autocomplete="off" placeholder="Untitled" />
+        </label>
+        <p class="dialog-error" id="noteDialogError" hidden></p>
+        <div class="dialog-actions">
+          <button class="plain-button" id="noteCancelButton" type="button">Cancel</button>
+          <button class="primary-button" type="submit">Create</button>
+        </div>
+      </form>
+    </div>
+
+    <input id="folderInput" type="file" accept=".md,.markdown,.mdown,text/markdown,text/plain" multiple webkitdirectory hidden />
+    <input id="fileInput" type="file" accept=".md,.markdown,.mdown,text/markdown,text/plain" multiple hidden />
+  </body>
+</html>

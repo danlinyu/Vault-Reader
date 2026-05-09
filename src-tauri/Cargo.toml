@@ -1,0 +1,19 @@
+[package]
+name = "vault-reader"
+version = "0.1.0"
+description = "A portable local Markdown reader."
+authors = ["Dan Li"]
+edition = "2021"
+
+[lib]
+name = "vault_reader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }

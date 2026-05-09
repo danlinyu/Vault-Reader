@@ -1,0 +1,64 @@
+{
+  "name": "vault-reader",
+  "version": "0.1.0",
+  "description": "A portable local Markdown reader with an Obsidian-inspired workspace.",
+  "private": true,
+  "author": "Dan Li",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danlinyu/Vault-Reader.git"
+  },
+  "main": "main.js",
+  "scripts": {
+    "build:web": "node scripts/build-web-dist.js",
+    "copy-vendor": "node scripts/copy-vendor.js",
+    "start": "npm run copy-vendor && electron .",
+    "build:portable": "npm run copy-vendor && electron-builder --win portable --x64",
+    "build:tauri": "npm run build:web && tauri build --no-bundle",
+    "build:light": "npm run build:tauri && node scripts/copy-light-exe.js"
+  },
+  "dependencies": {
+    "dompurify": "3.4.2",
+    "lucide": "0.468.0",
+    "marked": "15.0.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "latest",
+    "electron": "latest",
+    "electron-builder": "latest"
+  },
+  "build": {
+    "appId": "local.vault-reader",
+    "productName": "Vault Reader",
+    "directories": {
+      "output": "dist"
+    },
+    "toolsets": {
+      "winCodeSign": null
+    },
+    "files": [
+      "app.js",
+      "favicon.svg",
+      "index.html",
+      "main.js",
+      "preload.js",
+      "styles.css",
+      "vendor/**/*"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Vault-Reader-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "Vault-Reader-${version}-portable.${ext}"
+    }
+  }
+}
