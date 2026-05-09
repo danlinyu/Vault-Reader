@@ -30,11 +30,12 @@ const state = {
   treeOpen: new Set(),
   search: "",
   quickSearch: "",
-  view: "preview",
+  view: "live",
   theme: localStorage.getItem("vault-reader-theme") || "light",
   vaultName: "Reader",
   indexed: false,
   renderTimer: null,
+  liveTimer: null,
 };
 
 const elements = {
@@ -57,6 +58,7 @@ const elements = {
   saveButton: document.querySelector("#saveButton"),
   saveState: document.querySelector("#saveState"),
   sourceText: document.querySelector("#sourceText"),
+  sourceLineNumbers: document.querySelector("#sourceLineNumbers"),
   markdownView: document.querySelector("#markdownView"),
   outline: document.querySelector("#outline"),
   wordCount: document.querySelector("#wordCount"),
@@ -94,6 +96,10 @@ function wireEvents() {
   elements.collapseSidebarButton.addEventListener("click", toggleSidebar);
   elements.saveButton.addEventListener("click", saveCurrentNote);
   elements.sourceText.addEventListener("input", handleSourceInput);
+  elements.sourceText.addEventListener("scroll", syncLineNumberScroll);
+  elements.markdownView.addEventListener("input", handleLiveInput);
+  elements.markdownView.addEventListener("keydown", handleLiveKeydown);
+  elements.markdownView.addEventListener("paste", handleLivePaste);
   elements.noteForm.addEventListener("submit", handleNoteCreate);
   elements.noteCancelButton.addEventListener("click", hideNoteDialog);
 
@@ -482,6 +488,8 @@ async function selectFile(fileId) {
   elements.notePath.textContent = file.path;
   elements.sourceText.value = text;
   elements.sourceText.readOnly = false;
+  elements.markdownView.contentEditable = state.view === "source" ? "false" : "true";
+  updateLineNumbers();
   renderCurrentMarkdown(text);
   updateBacklinks();
   updateSaveState();
@@ -495,8 +503,10 @@ function handleSourceInput() {
     return;
   }
 
-  file.text = elements.sourceText.value;
+  const markdown = elements.sourceText.value;
+  file.text = markdown;
   file.dirty = true;
+  updateLineNumbers();
   updateSaveState();
   renderFileTree();
 
@@ -505,6 +515,53 @@ function handleSourceInput() {
     renderCurrentMarkdown(file.text);
     updateBacklinks();
   }, 120);
+}
+
+function handleLiveInput() {
+  const file = getCurrentFile();
+  if (!file) {
+    return;
+  }
+
+  const markdown = markdownFromEditor(elements.markdownView);
+  file.text = markdown;
+  file.dirty = true;
+  elements.sourceText.value = markdown;
+  updateLineNumbers();
+  updateSaveState();
+  renderFileTree();
+
+  clearTimeout(state.liveTimer);
+  state.liveTimer = setTimeout(() => {
+    decorateHeadings();
+    renderOutline(extractHeadings(markdown));
+    updateDetails(markdown);
+    updateBacklinks();
+  }, 120);
+}
+
+function handleLiveKeydown(event) {
+  if (!(event.ctrlKey || event.metaKey)) {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  if (key === "b" || key === "i") {
+    event.preventDefault();
+    document.execCommand(key === "b" ? "bold" : "italic");
+    handleLiveInput();
+  }
+}
+
+function handleLivePaste(event) {
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text) {
+    return;
+  }
+
+  event.preventDefault();
+  document.execCommand("insertText", false, text);
+  handleLiveInput();
 }
 
 function renderCurrentMarkdown(text) {
@@ -546,7 +603,7 @@ async function saveCurrentNote() {
     return;
   }
 
-  const text = elements.sourceText.value;
+  const text = getCurrentMarkdownText();
   setSaveState("Saving", "saving");
 
   try {
@@ -676,13 +733,23 @@ async function handleNoteCreate(event) {
     addFileEntry(created);
     hideNoteDialog();
     await selectFile(created.id);
-    setView("source");
-    elements.sourceText.focus();
+    setView("live");
+    focusLiveEditorEnd();
   } catch (error) {
     console.warn(error);
     elements.noteDialogError.textContent = "Could not create the note.";
     elements.noteDialogError.hidden = false;
   }
+}
+
+function focusLiveEditorEnd() {
+  elements.markdownView.focus();
+  const range = document.createRange();
+  range.selectNodeContents(elements.markdownView);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 function addFileEntry(file) {
@@ -748,6 +815,37 @@ function setSaveState(label, mode) {
 
 function getCurrentFile() {
   return state.files.find((entry) => entry.id === state.currentId) || null;
+}
+
+function getCurrentMarkdownText() {
+  const file = getCurrentFile();
+  if (!file) {
+    return "";
+  }
+
+  if (document.activeElement === elements.markdownView || elements.markdownView.contains(document.activeElement)) {
+    const markdown = markdownFromEditor(elements.markdownView);
+    file.text = markdown;
+    elements.sourceText.value = markdown;
+    updateLineNumbers();
+    return markdown;
+  }
+
+  return elements.sourceText.value;
+}
+
+function updateLineNumbers() {
+  const lineCount = Math.max(1, elements.sourceText.value.split(/\r\n|\r|\n/).length);
+  let numbers = "";
+  for (let index = 1; index <= lineCount; index += 1) {
+    numbers += `${index}${index === lineCount ? "" : "\n"}`;
+  }
+  elements.sourceLineNumbers.textContent = numbers;
+  syncLineNumberScroll();
+}
+
+function syncLineNumberScroll() {
+  elements.sourceLineNumbers.scrollTop = elements.sourceText.scrollTop;
 }
 
 function renderAll() {
@@ -906,6 +1004,179 @@ function renderMarkdown(markdown) {
   return miniMarkdown(prepared);
 }
 
+function markdownFromEditor(root) {
+  const blocks = Array.from(root.childNodes)
+    .map((node) => blockToMarkdown(node, 0))
+    .filter((value) => value !== null);
+
+  return normalizeMarkdown(blocks.join("\n\n"));
+}
+
+function blockToMarkdown(node, depth) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = normalizeInlineText(node.textContent || "");
+    return text.trim() ? text : null;
+  }
+
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return null;
+  }
+
+  const tag = node.tagName.toLowerCase();
+  if (/^h[1-6]$/.test(tag)) {
+    const level = Number(tag.slice(1));
+    return `${"#".repeat(level)} ${inlineMarkdownFromNode(node).trim()}`;
+  }
+
+  if (tag === "p" || tag === "div") {
+    const text = inlineMarkdownFromNode(node).trim();
+    return text || "";
+  }
+
+  if (tag === "br") {
+    return "";
+  }
+
+  if (tag === "blockquote") {
+    const text = Array.from(node.childNodes)
+      .map((child) => blockToMarkdown(child, depth))
+      .filter((value) => value !== null)
+      .join("\n\n")
+      .trim();
+    return text
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+  }
+
+  if (tag === "pre") {
+    const code = node.querySelector("code");
+    const language = code?.className?.match(/language-([^\s]+)/)?.[1] || "";
+    return `\`\`\`${language}\n${(node.textContent || "").replace(/\n+$/, "")}\n\`\`\``;
+  }
+
+  if (tag === "ul" || tag === "ol") {
+    return listMarkdownFromNode(node, depth, tag === "ol");
+  }
+
+  if (tag === "hr") {
+    return "---";
+  }
+
+  if (tag === "table") {
+    return tableMarkdownFromNode(node);
+  }
+
+  const childBlocks = Array.from(node.childNodes)
+    .map((child) => blockToMarkdown(child, depth))
+    .filter((value) => value !== null);
+  return childBlocks.length ? childBlocks.join("\n\n") : inlineMarkdownFromNode(node).trim();
+}
+
+function listMarkdownFromNode(listNode, depth, ordered) {
+  const items = Array.from(listNode.children).filter((child) => child.tagName?.toLowerCase() === "li");
+
+  return items
+    .map((item, index) => {
+      const nestedLists = Array.from(item.children).filter((child) => ["ul", "ol"].includes(child.tagName?.toLowerCase()));
+      const clone = item.cloneNode(true);
+      Array.from(clone.children)
+        .filter((child) => ["ul", "ol"].includes(child.tagName?.toLowerCase()))
+        .forEach((child) => child.remove());
+
+      const prefix = ordered ? `${index + 1}. ` : "- ";
+      const indent = "  ".repeat(depth);
+      const primary = `${indent}${prefix}${inlineMarkdownFromNode(clone).trim()}`;
+      const nested = nestedLists
+        .map((child) => listMarkdownFromNode(child, depth + 1, child.tagName.toLowerCase() === "ol"))
+        .join("\n");
+
+      return nested ? `${primary}\n${nested}` : primary;
+    })
+    .join("\n");
+}
+
+function tableMarkdownFromNode(tableNode) {
+  const rows = Array.from(tableNode.querySelectorAll("tr")).map((row) =>
+    Array.from(row.children).map((cell) => inlineMarkdownFromNode(cell).trim().replace(/\|/g, "\\|"))
+  );
+
+  if (!rows.length) {
+    return "";
+  }
+
+  const header = rows[0];
+  const separator = header.map(() => "---");
+  const body = rows.slice(1);
+  return [header, separator, ...body].map((row) => `| ${row.join(" | ")} |`).join("\n");
+}
+
+function inlineMarkdownFromNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return escapeMarkdownText(normalizeInlineText(node.textContent || ""));
+  }
+
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return "";
+  }
+
+  const tag = node.tagName.toLowerCase();
+  const childText = () => Array.from(node.childNodes).map(inlineMarkdownFromNode).join("");
+
+  if (tag === "br") {
+    return "\n";
+  }
+
+  if (tag === "strong" || tag === "b") {
+    const text = childText();
+    return text.trim() ? `**${text}**` : "";
+  }
+
+  if (tag === "em" || tag === "i") {
+    const text = childText();
+    return text.trim() ? `*${text}*` : "";
+  }
+
+  if (tag === "code") {
+    return `\`${(node.textContent || "").replace(/`/g, "\\`")}\``;
+  }
+
+  if (tag === "a") {
+    const label = childText().trim() || node.textContent.trim();
+    const href = node.getAttribute("href") || "";
+    if (href.startsWith("#wiki:")) {
+      return `[[${decodeURIComponent(href.slice(6))}${label && label !== decodeURIComponent(href.slice(6)) ? `|${label}` : ""}]]`;
+    }
+    return href ? `[${label}](${href})` : label;
+  }
+
+  if (tag === "img") {
+    const alt = node.getAttribute("alt") || "";
+    const src = node.getAttribute("src") || "";
+    return src ? `![${alt}](${src})` : "";
+  }
+
+  return childText();
+}
+
+function normalizeMarkdown(markdown) {
+  return markdown
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "")
+    .replace(/\n+$/, "")
+    .concat("\n");
+}
+
+function normalizeInlineText(text) {
+  return text.replace(/\u00a0/g, " ");
+}
+
+function escapeMarkdownText(text) {
+  return text.replace(/([\\`*_[\]])/g, "\\$1");
+}
+
 function transformWikiLinks(markdown) {
   return markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => {
     const label = alias || target;
@@ -918,6 +1189,7 @@ function miniMarkdown(markdown) {
   const html = [];
   let inList = false;
   let inCode = false;
+  let codeLanguage = "";
   let codeLines = [];
 
   function closeList() {
@@ -930,12 +1202,15 @@ function miniMarkdown(markdown) {
   for (const line of lines) {
     if (line.startsWith("```")) {
       if (inCode) {
-        html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        const className = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : "";
+        html.push(`<pre><code${className}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
         codeLines = [];
+        codeLanguage = "";
         inCode = false;
       } else {
         closeList();
         inCode = true;
+        codeLanguage = line.slice(3).trim().split(/\s+/)[0] || "";
       }
       continue;
     }
@@ -1127,6 +1402,11 @@ function handlePreviewClick(event) {
 
   const href = anchor.getAttribute("href") || "";
 
+  if ((state.view === "live" || state.view === "split") && !(event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    return;
+  }
+
   if (/^https?:\/\//i.test(href) && window.vaultReaderNative) {
     event.preventDefault();
     window.vaultReaderNative.openExternal(href);
@@ -1194,9 +1474,19 @@ function toggleSidebar() {
 function setView(view) {
   state.view = view;
   elements.appShell.dataset.view = view;
+  elements.markdownView.contentEditable = view === "source" ? "false" : "true";
   elements.viewButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.viewMode === view);
   });
+
+  if (view === "live" || view === "split") {
+    const file = getCurrentFile();
+    if (file) {
+      renderCurrentMarkdown(file.text || elements.sourceText.value);
+    }
+  }
+
+  updateLineNumbers();
 }
 
 function setIndexStatus(value) {

@@ -12,7 +12,7 @@
     <script defer src="./app.js"></script>
   </head>
   <body>
-    <div class="app-shell" id="appShell" data-view="preview">
+    <div class="app-shell" id="appShell" data-view="live">
       <nav class="rail" aria-label="Primary actions">
         <button class="icon-button is-active" id="openFolderButton" type="button" title="Open folder" aria-label="Open folder">
           <i data-lucide="folder-open"></i>
@@ -68,7 +68,7 @@
               <span id="saveState">Saved</span>
             </button>
             <div class="segmented" role="group" aria-label="View mode">
-              <button type="button" class="segment is-active" data-view-mode="preview">Preview</button>
+              <button type="button" class="segment is-active" data-view-mode="live">Live</button>
               <button type="button" class="segment" data-view-mode="split">Split</button>
               <button type="button" class="segment" data-view-mode="source">Source</button>
             </div>
@@ -77,10 +77,13 @@
 
         <section class="content-grid">
           <section class="source-pane" aria-label="Source">
-            <textarea id="sourceText" spellcheck="true"></textarea>
+            <div class="source-editor">
+              <div class="line-numbers" id="sourceLineNumbers" aria-hidden="true">1</div>
+              <textarea id="sourceText" spellcheck="true"></textarea>
+            </div>
           </section>
-          <article class="preview-pane" aria-label="Preview">
-            <div class="markdown-body" id="markdownView"></div>
+          <article class="preview-pane" aria-label="Live editor">
+            <div class="markdown-body live-editor" id="markdownView" contenteditable="true" spellcheck="true"></div>
           </article>
         </section>
       </main>
