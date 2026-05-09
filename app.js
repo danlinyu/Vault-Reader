@@ -36,6 +36,7 @@ const state = {
   indexed: false,
   renderTimer: null,
   liveTimer: null,
+  liveLineTimer: null,
 };
 
 const elements = {
@@ -59,6 +60,7 @@ const elements = {
   saveState: document.querySelector("#saveState"),
   sourceText: document.querySelector("#sourceText"),
   sourceLineNumbers: document.querySelector("#sourceLineNumbers"),
+  liveLineNumbers: document.querySelector("#liveLineNumbers"),
   markdownView: document.querySelector("#markdownView"),
   outline: document.querySelector("#outline"),
   wordCount: document.querySelector("#wordCount"),
@@ -100,6 +102,7 @@ function wireEvents() {
   elements.markdownView.addEventListener("input", handleLiveInput);
   elements.markdownView.addEventListener("keydown", handleLiveKeydown);
   elements.markdownView.addEventListener("paste", handleLivePaste);
+  window.addEventListener("resize", handleLiveLineNumberResize);
   elements.noteForm.addEventListener("submit", handleNoteCreate);
   elements.noteCancelButton.addEventListener("click", hideNoteDialog);
 
@@ -536,8 +539,21 @@ function handleLiveInput() {
     decorateHeadings();
     renderOutline(extractHeadings(markdown));
     updateDetails(markdown);
+    updateLiveLineNumbers(markdown);
     updateBacklinks();
   }, 120);
+}
+
+function handleLiveLineNumberResize() {
+  const file = getCurrentFile();
+  if (!file) {
+    return;
+  }
+
+  clearTimeout(state.liveLineTimer);
+  state.liveLineTimer = setTimeout(() => {
+    updateLiveLineNumbers(file.text || elements.sourceText.value);
+  }, 100);
 }
 
 function handleLiveKeydown(event) {
@@ -568,6 +584,7 @@ function renderCurrentMarkdown(text) {
   elements.markdownView.innerHTML = renderMarkdown(text);
   decorateRenderedNote(text);
   updateDetails(text);
+  updateLiveLineNumbers(text);
 }
 
 async function readEntryText(file) {
@@ -846,6 +863,151 @@ function updateLineNumbers() {
 
 function syncLineNumberScroll() {
   elements.sourceLineNumbers.scrollTop = elements.sourceText.scrollTop;
+}
+
+function updateLiveLineNumbers(markdown) {
+  elements.liveLineNumbers.textContent = "";
+
+  if (state.view === "source") {
+    return;
+  }
+
+  const markers = extractLiveLineMarkers(markdown);
+  const anchors = getLiveLineAnchors();
+  const count = Math.min(markers.length, anchors.length);
+  const gutterTop = elements.liveLineNumbers.getBoundingClientRect().top;
+  const fragment = document.createDocumentFragment();
+
+  for (let index = 0; index < count; index += 1) {
+    const anchorTop = anchors[index].getBoundingClientRect().top;
+    const marker = document.createElement("span");
+    marker.className = "live-line-number";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = markers[index];
+    marker.style.top = `${Math.max(0, Math.round(anchorTop - gutterTop + 2))}px`;
+    fragment.append(marker);
+  }
+
+  elements.liveLineNumbers.append(fragment);
+}
+
+function getLiveLineAnchors() {
+  const anchors = [];
+
+  for (const child of elements.markdownView.children) {
+    const tag = child.tagName.toLowerCase();
+
+    if (tag === "ul" || tag === "ol") {
+      anchors.push(...Array.from(child.querySelectorAll(":scope > li")));
+      continue;
+    }
+
+    anchors.push(child);
+  }
+
+  return anchors.filter((anchor) => anchor.getClientRects().length);
+}
+
+function extractLiveLineMarkers(markdown) {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const markers = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    const lineNumber = index + 1;
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      markers.push(lineNumber);
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (isHeadingLine(trimmed) || isHorizontalRuleLine(trimmed)) {
+      markers.push(lineNumber);
+      index += 1;
+      continue;
+    }
+
+    if (isTableStart(lines, index)) {
+      markers.push(lineNumber);
+      index += 2;
+      while (index < lines.length && isTableRowLine(lines[index])) {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (isListItemLine(line)) {
+      markers.push(lineNumber);
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith(">")) {
+      markers.push(lineNumber);
+      index += 1;
+      while (index < lines.length && (lines[index].trim().startsWith(">") || !lines[index].trim())) {
+        index += 1;
+      }
+      continue;
+    }
+
+    markers.push(lineNumber);
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !isRenderedBlockStart(lines, index)) {
+      index += 1;
+    }
+  }
+
+  return markers;
+}
+
+function isRenderedBlockStart(lines, index) {
+  const line = lines[index];
+  const trimmed = line.trim();
+  return (
+    trimmed.startsWith("```") ||
+    trimmed.startsWith(">") ||
+    isHeadingLine(trimmed) ||
+    isHorizontalRuleLine(trimmed) ||
+    isListItemLine(line) ||
+    isTableStart(lines, index)
+  );
+}
+
+function isHeadingLine(trimmed) {
+  return /^#{1,6}\s+/.test(trimmed);
+}
+
+function isHorizontalRuleLine(trimmed) {
+  return /^([-*_])(?:\s*\1){2,}$/.test(trimmed);
+}
+
+function isListItemLine(line) {
+  return /^\s*(?:[-*+]|\d+[.)])\s+/.test(line);
+}
+
+function isTableStart(lines, index) {
+  return isTableRowLine(lines[index]) && isTableSeparatorLine(lines[index + 1] || "");
+}
+
+function isTableRowLine(line) {
+  return /^\s*\|.+\|\s*$/.test(line);
+}
+
+function isTableSeparatorLine(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
 }
 
 function renderAll() {
@@ -1487,6 +1649,9 @@ function setView(view) {
   }
 
   updateLineNumbers();
+  if (view === "source") {
+    updateLiveLineNumbers("");
+  }
 }
 
 function setIndexStatus(value) {

@@ -498,6 +498,34 @@ p {
   background: var(--panel);
 }
 
+.live-editor-frame {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 860px);
+  width: min(100%, 932px);
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.live-line-numbers {
+  position: relative;
+  min-height: 100%;
+  padding-bottom: 80px;
+  border-right: 1px solid color-mix(in srgb, var(--border), transparent 34%);
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+  text-align: right;
+  user-select: none;
+}
+
+.live-line-number {
+  position: absolute;
+  right: 10px;
+  min-width: 2ch;
+  opacity: 0.86;
+}
+
 .app-shell[data-view="split"] .content-grid {
   grid-template-columns: minmax(280px, 0.82fr) minmax(0, 1fr);
 }
@@ -516,8 +544,9 @@ p {
 }
 
 .markdown-body {
-  width: min(100%, 860px);
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
   padding: 46px clamp(24px, 5vw, 70px) 80px;
   color: var(--text);
   font-size: 16px;
@@ -1044,5 +1073,14 @@ p {
 
   .markdown-body {
     padding: 32px 22px 62px;
+  }
+
+  .live-editor-frame {
+    grid-template-columns: 38px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .live-line-number {
+    right: 8px;
   }
 }
