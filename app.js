@@ -20,13 +20,16 @@ console.log(reader);
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const SKIPPED_DIRS = new Set([".git", ".obsidian", "node_modules", ".trash"]);
+const POSITION_STORAGE_KEY = "vault-reader-reading-positions:v1";
 
 const state = {
   files: [],
   currentId: null,
+  tabs: [],
   rootPath: null,
   directoryHandle: null,
   folders: new Set(),
+  readingPositions: loadStoredReadingPositions(),
   treeOpen: new Set(),
   search: "",
   quickSearch: "",
@@ -37,6 +40,8 @@ const state = {
   renderTimer: null,
   liveTimer: null,
   liveLineTimer: null,
+  positionTimer: null,
+  restoringPosition: false,
 };
 
 const elements = {
@@ -56,11 +61,13 @@ const elements = {
   vaultName: document.querySelector("#vaultName"),
   noteTitle: document.querySelector("#noteTitle"),
   notePath: document.querySelector("#notePath"),
+  tabStrip: document.querySelector("#tabStrip"),
   saveButton: document.querySelector("#saveButton"),
   saveState: document.querySelector("#saveState"),
   sourceText: document.querySelector("#sourceText"),
   sourceLineNumbers: document.querySelector("#sourceLineNumbers"),
   liveLineNumbers: document.querySelector("#liveLineNumbers"),
+  previewPane: document.querySelector("#previewPane"),
   markdownView: document.querySelector("#markdownView"),
   outline: document.querySelector("#outline"),
   wordCount: document.querySelector("#wordCount"),
@@ -98,7 +105,11 @@ function wireEvents() {
   elements.collapseSidebarButton.addEventListener("click", toggleSidebar);
   elements.saveButton.addEventListener("click", saveCurrentNote);
   elements.sourceText.addEventListener("input", handleSourceInput);
-  elements.sourceText.addEventListener("scroll", syncLineNumberScroll);
+  elements.sourceText.addEventListener("scroll", () => {
+    syncLineNumberScroll();
+    scheduleReadingPositionSave();
+  });
+  elements.previewPane.addEventListener("scroll", scheduleReadingPositionSave);
   elements.markdownView.addEventListener("input", handleLiveInput);
   elements.markdownView.addEventListener("keydown", handleLiveKeydown);
   elements.markdownView.addEventListener("paste", handleLivePaste);
@@ -136,6 +147,8 @@ function wireEvents() {
   elements.viewButtons.forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.viewMode));
   });
+
+  window.addEventListener("beforeunload", saveCurrentReadingPosition);
 
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -209,7 +222,8 @@ function loadSample() {
   };
 
   state.files = [sample];
-  state.currentId = sample.id;
+  state.currentId = null;
+  state.tabs = [];
   state.rootPath = null;
   state.directoryHandle = null;
   state.vaultName = "Reader";
@@ -302,6 +316,9 @@ async function loadNativeResult(result) {
 
   state.directoryHandle = null;
   replaceFiles(result.files, result.vaultName, new Set(result.folders || []), result.rootPath || null);
+  if (!result.rootPath && result.files.length > 1) {
+    state.tabs = result.files.map((file) => file.id);
+  }
   await selectFile(result.files[0].id);
   indexFilesInBackground();
 }
@@ -413,6 +430,9 @@ async function handleFileInput(event) {
   const files = picked.map((file, index) => fileToEntry(file, file.name, `file:${index}:`));
   state.directoryHandle = null;
   replaceFiles(files, picked.length === 1 ? stripExtension(picked[0].name) : "Loose files", new Set(), null);
+  if (files.length > 1) {
+    state.tabs = files.map((file) => file.id);
+  }
   await selectFile(files[0].id);
   indexFilesInBackground();
 }
@@ -433,9 +453,11 @@ function fileToEntry(file, path, idPrefix) {
 }
 
 function replaceFiles(files, vaultName, folders, rootPath = null) {
+  saveCurrentReadingPosition();
   files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
   state.files = files;
   state.currentId = null;
+  state.tabs = [];
   state.rootPath = rootPath;
   state.folders = folders;
   state.treeOpen = new Set(Array.from(folders).filter((path) => path.split("/").length <= 2));
@@ -485,7 +507,12 @@ async function selectFile(fileId) {
     return;
   }
 
+  if (state.currentId !== file.id) {
+    saveCurrentReadingPosition();
+  }
+
   state.currentId = file.id;
+  openTab(file.id);
   const text = await readEntryText(file);
   elements.noteTitle.textContent = file.title;
   elements.notePath.textContent = file.path;
@@ -497,6 +524,8 @@ async function selectFile(fileId) {
   updateBacklinks();
   updateSaveState();
   renderFileTree();
+  renderTabs();
+  restoreReadingPosition(file);
   document.title = `${file.title} - Vault Reader`;
 }
 
@@ -512,6 +541,7 @@ function handleSourceInput() {
   updateLineNumbers();
   updateSaveState();
   renderFileTree();
+  renderTabs();
 
   clearTimeout(state.renderTimer);
   state.renderTimer = setTimeout(() => {
@@ -533,6 +563,7 @@ function handleLiveInput() {
   updateLineNumbers();
   updateSaveState();
   renderFileTree();
+  renderTabs();
 
   clearTimeout(state.liveTimer);
   state.liveTimer = setTimeout(() => {
@@ -632,6 +663,7 @@ async function saveCurrentNote() {
       file.modified = Date.now();
       setSaveState("Saved", "saved");
       renderFileTree();
+      renderTabs();
       return;
     }
 
@@ -645,6 +677,7 @@ async function saveCurrentNote() {
       file.modified = Date.now();
       setSaveState("Saved", "saved");
       renderFileTree();
+      renderTabs();
       return;
     }
 
@@ -777,6 +810,8 @@ function addFileEntry(file) {
 }
 
 function replaceOrAddFile(previousFile, nextFile) {
+  const previousKey = filePositionKey(previousFile);
+  const previousPosition = state.readingPositions.get(previousKey);
   const index = state.files.findIndex((file) => file.id === previousFile.id);
   if (index === -1) {
     state.files.push(nextFile);
@@ -786,6 +821,11 @@ function replaceOrAddFile(previousFile, nextFile) {
       text: nextFile.text ?? previousFile.text,
       dirty: false,
     };
+  }
+  state.tabs = uniqueIds(state.tabs.map((id) => (id === previousFile.id ? nextFile.id : id)));
+  if (previousPosition) {
+    state.readingPositions.set(filePositionKey(nextFile), previousPosition);
+    persistReadingPositions();
   }
   collectParentFolders(nextFile.path, state.folders);
   renderAll();
@@ -834,6 +874,81 @@ function getCurrentFile() {
   return state.files.find((entry) => entry.id === state.currentId) || null;
 }
 
+function openTab(fileId) {
+  if (!state.tabs.includes(fileId)) {
+    state.tabs.push(fileId);
+  }
+}
+
+function closeTab(fileId) {
+  if (state.tabs.length <= 1) {
+    return;
+  }
+
+  const index = state.tabs.indexOf(fileId);
+  if (index === -1) {
+    return;
+  }
+
+  const closingCurrent = fileId === state.currentId;
+  if (closingCurrent) {
+    saveCurrentReadingPosition();
+  }
+
+  state.tabs.splice(index, 1);
+
+  if (closingCurrent) {
+    const nextId = state.tabs[Math.min(index, state.tabs.length - 1)];
+    selectFile(nextId);
+    return;
+  }
+
+  renderTabs();
+}
+
+function renderTabs() {
+  state.tabs = state.tabs.filter((id) => state.files.some((file) => file.id === id));
+  elements.tabStrip.textContent = "";
+  elements.tabStrip.hidden = state.tabs.length === 0;
+
+  for (const fileId of state.tabs) {
+    const file = state.files.find((entry) => entry.id === fileId);
+    if (!file) {
+      continue;
+    }
+
+    const item = document.createElement("div");
+    item.className = `note-tab-item${file.id === state.currentId ? " is-active" : ""}`;
+
+    const button = document.createElement("button");
+    button.className = `note-tab${file.dirty ? " is-dirty" : ""}`;
+    button.type = "button";
+    button.role = "tab";
+    button.ariaSelected = file.id === state.currentId ? "true" : "false";
+    button.title = file.path;
+    button.innerHTML = `<i data-lucide="file-text"></i><span></span>`;
+    button.querySelector("span").textContent = file.title;
+    button.addEventListener("click", () => selectFile(file.id));
+
+    const close = document.createElement("button");
+    close.className = "note-tab-close";
+    close.type = "button";
+    close.title = `Close ${file.title}`;
+    close.ariaLabel = `Close ${file.title}`;
+    close.disabled = state.tabs.length <= 1;
+    close.innerHTML = `<i data-lucide="x"></i>`;
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeTab(file.id);
+    });
+
+    item.append(button, close);
+    elements.tabStrip.append(item);
+  }
+
+  refreshIcons();
+}
+
 function getCurrentMarkdownText() {
   const file = getCurrentFile();
   if (!file) {
@@ -863,6 +978,91 @@ function updateLineNumbers() {
 
 function syncLineNumberScroll() {
   elements.sourceLineNumbers.scrollTop = elements.sourceText.scrollTop;
+}
+
+function scheduleReadingPositionSave() {
+  if (state.restoringPosition) {
+    return;
+  }
+
+  clearTimeout(state.positionTimer);
+  state.positionTimer = setTimeout(saveCurrentReadingPosition, 120);
+}
+
+function saveCurrentReadingPosition() {
+  const file = getCurrentFile();
+  if (!file) {
+    return;
+  }
+
+  const key = filePositionKey(file);
+  const previous = state.readingPositions.get(key) || { previewTop: 0, sourceTop: 0 };
+  const next = {
+    previewTop: previous.previewTop || 0,
+    sourceTop: previous.sourceTop || 0,
+    updatedAt: Date.now(),
+  };
+
+  if (state.view !== "source") {
+    next.previewTop = Math.max(0, Math.round(elements.previewPane.scrollTop));
+  }
+
+  if (state.view !== "live") {
+    next.sourceTop = Math.max(0, Math.round(elements.sourceText.scrollTop));
+  }
+
+  state.readingPositions.set(key, next);
+  persistReadingPositions();
+}
+
+function restoreReadingPosition(file) {
+  const position = state.readingPositions.get(filePositionKey(file)) || { previewTop: 0, sourceTop: 0 };
+  state.restoringPosition = true;
+
+  requestAnimationFrame(() => {
+    elements.previewPane.scrollTop = position.previewTop || 0;
+    elements.sourceText.scrollTop = position.sourceTop || 0;
+    syncLineNumberScroll();
+
+    requestAnimationFrame(() => {
+      state.restoringPosition = false;
+      updateLiveLineNumbers(file.text || elements.sourceText.value);
+    });
+  });
+}
+
+function filePositionKey(file) {
+  if (file.absolutePath) {
+    return `absolute:${file.absolutePath.toLowerCase()}`;
+  }
+
+  const vaultPart = state.rootPath || state.vaultName || "loose";
+  return `vault:${vaultPart}::${file.path || file.id}`;
+}
+
+function loadStoredReadingPositions() {
+  try {
+    const raw = localStorage.getItem(POSITION_STORAGE_KEY);
+    if (!raw) {
+      return new Map();
+    }
+    return new Map(Object.entries(JSON.parse(raw)));
+  } catch (error) {
+    console.warn(error);
+    return new Map();
+  }
+}
+
+function persistReadingPositions() {
+  try {
+    const recent = Array.from(state.readingPositions.entries())
+      .sort((left, right) => (right[1]?.updatedAt || 0) - (left[1]?.updatedAt || 0))
+      .slice(0, 500);
+    state.readingPositions = new Map(recent);
+    localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(Object.fromEntries(state.readingPositions)));
+  } catch (error) {
+    console.warn(error);
+  }
 }
 
 function updateLiveLineNumbers(markdown) {
@@ -1014,6 +1214,7 @@ function renderAll() {
   elements.vaultName.textContent = state.vaultName;
   elements.fileCount.textContent = `${state.files.length} ${state.files.length === 1 ? "note" : "notes"}`;
   renderFileTree();
+  renderTabs();
   renderQuickResults();
 }
 
@@ -1634,6 +1835,8 @@ function toggleSidebar() {
 }
 
 function setView(view) {
+  const file = getCurrentFile();
+  saveCurrentReadingPosition();
   state.view = view;
   elements.appShell.dataset.view = view;
   elements.markdownView.contentEditable = view === "source" ? "false" : "true";
@@ -1642,7 +1845,6 @@ function setView(view) {
   });
 
   if (view === "live" || view === "split") {
-    const file = getCurrentFile();
     if (file) {
       renderCurrentMarkdown(file.text || elements.sourceText.value);
     }
@@ -1651,6 +1853,9 @@ function setView(view) {
   updateLineNumbers();
   if (view === "source") {
     updateLiveLineNumbers("");
+  }
+  if (file) {
+    restoreReadingPosition(file);
   }
 }
 
@@ -1694,6 +1899,10 @@ function nextUntitledName() {
   }
 
   return candidate;
+}
+
+function uniqueIds(ids) {
+  return Array.from(new Set(ids));
 }
 
 function parentPath(path) {

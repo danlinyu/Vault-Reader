@@ -75,6 +75,8 @@
           </div>
         </header>
 
+        <div class="tab-strip" id="tabStrip" role="tablist" aria-label="Open notes" hidden></div>
+
         <section class="content-grid">
           <section class="source-pane" aria-label="Source">
             <div class="source-editor">
@@ -82,7 +84,7 @@
               <textarea id="sourceText" spellcheck="true"></textarea>
             </div>
           </section>
-          <article class="preview-pane" aria-label="Live editor">
+          <article class="preview-pane" id="previewPane" aria-label="Live editor">
             <div class="live-editor-frame">
               <div class="live-line-numbers" id="liveLineNumbers" aria-hidden="true" inert></div>
               <div class="markdown-body live-editor" id="markdownView" contenteditable="true" spellcheck="true"></div>

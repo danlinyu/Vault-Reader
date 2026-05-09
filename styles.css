@@ -356,6 +356,107 @@ p {
   flex: 0 0 auto;
 }
 
+.tab-strip {
+  display: flex;
+  align-items: end;
+  gap: 3px;
+  min-height: 39px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 5px 10px 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 78%, var(--panel-soft));
+  scrollbar-width: thin;
+}
+
+.tab-strip[hidden] {
+  display: none;
+}
+
+.note-tab-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 126px;
+  max-width: 226px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.note-tab-item.is-active {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.note-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0 7px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.note-tab svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--faint);
+}
+
+.note-tab span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-tab.is-dirty span::after {
+  content: " *";
+  color: var(--accent);
+  font-weight: 850;
+}
+
+.note-tab-close {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.note-tab-close:hover,
+.note-tab-close:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.note-tab-close:disabled {
+  visibility: hidden;
+}
+
+.note-tab-close svg {
+  width: 14px;
+  height: 14px;
+}
+
 .save-button {
   display: inline-flex;
   align-items: center;

@@ -7,6 +7,8 @@ Vault Reader is a small, local-first Markdown note reader and editor for Windows
 - Open a folder as a Markdown vault.
 - Open individual `.md`, `.markdown`, and `.mdown` files.
 - Edit notes directly in Live mode, or use Source and Split mode when you want raw Markdown.
+- Keep multiple notes open in tabs.
+- Restore the last reading position for notes you have opened before.
 - Use line numbers in Live, Source, and Split mode while editing Markdown.
 - Save with the toolbar button or `Ctrl+S`.
 - Create notes with the toolbar button or `Ctrl+N`.
