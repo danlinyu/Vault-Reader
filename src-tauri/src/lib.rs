@@ -28,6 +28,7 @@ struct FileEntry {
     directory: String,
     text: Option<String>,
     size: u64,
+    created: u128,
     modified: u128,
     #[serde(rename = "isDisk")]
     is_disk: bool,
@@ -275,6 +276,12 @@ fn file_entry(absolute_path: &Path, root_path: &Path) -> Result<FileEntry, Strin
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
+    let created = metadata
+        .created()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
 
     let path = if relative_path.is_empty() { name.clone() } else { relative_path };
 
@@ -287,6 +294,7 @@ fn file_entry(absolute_path: &Path, root_path: &Path) -> Result<FileEntry, Strin
         name,
         text: None,
         size: metadata.len(),
+        created,
         modified,
         is_disk: true,
     })

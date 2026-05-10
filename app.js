@@ -71,6 +71,7 @@ const elements = {
   markdownView: document.querySelector("#markdownView"),
   outline: document.querySelector("#outline"),
   wordCount: document.querySelector("#wordCount"),
+  lineCount: document.querySelector("#lineCount"),
   readingTime: document.querySelector("#readingTime"),
   linkCount: document.querySelector("#linkCount"),
   backlinks: document.querySelector("#backlinks"),
@@ -217,6 +218,7 @@ function loadSample() {
     directory: "",
     text: SAMPLE_NOTE,
     size: SAMPLE_NOTE.length,
+    created: null,
     modified: null,
     isSample: true,
   };
@@ -448,6 +450,7 @@ function fileToEntry(file, path, idPrefix) {
     file,
     text: null,
     size: file.size,
+    created: null,
     modified: file.lastModified || null,
     isSample: false,
   };
@@ -461,7 +464,7 @@ function replaceFiles(files, vaultName, folders, rootPath = null) {
   state.tabs = [];
   state.rootPath = rootPath;
   state.folders = folders;
-  state.treeOpen = new Set(Array.from(folders).filter((path) => path.split("/").length <= 2));
+  state.treeOpen = new Set();
   state.vaultName = vaultName || "Vault";
   state.search = "";
   state.quickSearch = "";
@@ -642,6 +645,7 @@ async function readEntryText(file) {
 
   file.text = await rawFile.text();
   file.size = rawFile.size;
+  file.created = file.created || null;
   file.modified = rawFile.lastModified || null;
   return file.text;
 }
@@ -743,6 +747,7 @@ async function createPersistedNote(name, text) {
       handle,
       text,
       size: text.length,
+      created: Date.now(),
       modified: Date.now(),
       isSample: false,
     };
@@ -843,6 +848,7 @@ function createDraftNoteEntry(name, text) {
     directory: "",
     text,
     size: text.length,
+    created: Date.now(),
     modified: Date.now(),
     dirty: true,
     isDraft: true,
@@ -926,7 +932,7 @@ function renderTabs() {
     button.type = "button";
     button.role = "tab";
     button.ariaSelected = file.id === state.currentId ? "true" : "false";
-    button.title = file.path;
+    button.title = fileTooltip(file);
     button.innerHTML = `<i data-lucide="file-text"></i><span></span>`;
     button.querySelector("span").textContent = file.title;
     button.addEventListener("click", () => selectFile(file.id));
@@ -1301,7 +1307,7 @@ function renderTreeNode(node, container, parentPath) {
     const button = document.createElement("button");
     button.className = `tree-file${file.id === state.currentId ? " is-active" : ""}${file.dirty ? " is-dirty" : ""}`;
     button.type = "button";
-    button.title = file.path;
+    button.title = fileTooltip(file);
     button.innerHTML = `<i data-lucide="file-text"></i><span></span>`;
     button.querySelector("span").textContent = file.title;
     button.addEventListener("click", () => selectFile(file.id));
@@ -1338,6 +1344,7 @@ function renderQuickResults() {
     button.className = `quick-result${index === 0 ? " is-active" : ""}`;
     button.type = "button";
     button.dataset.fileId = file.id;
+    button.title = fileTooltip(file);
     button.innerHTML = `<strong></strong><span></span>`;
     button.querySelector("strong").textContent = file.title;
     button.querySelector("span").textContent = file.path;
@@ -1347,6 +1354,30 @@ function renderQuickResults() {
     });
     elements.quickResults.append(button);
   }
+}
+
+function fileTooltip(file) {
+  return [
+    file.path,
+    `Created: ${formatFileTime(file.created)}`,
+    `Modified: ${formatFileTime(file.modified)}`,
+  ].join("\n");
+}
+
+function formatFileTime(value) {
+  if (!value) {
+    return "Not available";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not available";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function renderMarkdown(markdown) {
@@ -1706,10 +1737,12 @@ function updateDetails(markdown) {
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/[#>*_\-[\]()`]/g, " ");
   const words = plain.trim() ? plain.trim().split(/\s+/).length : 0;
+  const lines = Math.max(1, markdown.split(/\r\n|\r|\n/).length);
   const links = (markdown.match(/\[[^\]]+\]\([^)]+\)|\[\[[^\]]+\]\]/g) || []).length;
   const minutes = Math.max(1, Math.ceil(words / 220));
 
   elements.wordCount.textContent = words.toLocaleString();
+  elements.lineCount.textContent = lines.toLocaleString();
   elements.readingTime.textContent = `${minutes} min`;
   elements.linkCount.textContent = links.toLocaleString();
 }

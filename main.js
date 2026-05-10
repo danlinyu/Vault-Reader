@@ -307,6 +307,7 @@ async function fileEntry(absolutePath, rootPath) {
     directory: parentPath(relativePath),
     text: null,
     size: stats.size,
+    created: stats.birthtimeMs,
     modified: stats.mtimeMs,
     isDisk: true,
   };
