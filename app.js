@@ -48,6 +48,14 @@ const state = {
   sidebarWidth: loadStoredSidebarWidth(),
   inspectorWidth: loadStoredInspectorWidth(),
   recentVaults: loadStoredRecentVaults(),
+  folderNavigatorPath: null,
+  folderNavigatorParentPath: null,
+  folderNavigatorRoots: [],
+  folderNavigatorFolders: [],
+  folderNavigatorHistory: [],
+  folderNavigatorHistoryIndex: -1,
+  folderNavigatorLoading: false,
+  folderNavigatorError: "",
   view: "live",
   theme: localStorage.getItem("vault-reader-theme") || "light",
   vaultName: "Reader",
@@ -72,7 +80,19 @@ const elements = {
   showSidebarButton: document.querySelector("#showSidebarButton"),
   toggleThemeButton: document.querySelector("#toggleThemeButton"),
   collapseSidebarButton: document.querySelector("#collapseSidebarButton"),
-  vaultSelect: document.querySelector("#vaultSelect"),
+  vaultSwitcher: document.querySelector(".vault-switcher"),
+  vaultNavigatorButton: document.querySelector("#vaultNavigatorButton"),
+  vaultNavigatorLabel: document.querySelector("#vaultNavigatorLabel"),
+  vaultNavigator: document.querySelector("#vaultNavigator"),
+  folderBackButton: document.querySelector("#folderBackButton"),
+  folderForwardButton: document.querySelector("#folderForwardButton"),
+  folderUpButton: document.querySelector("#folderUpButton"),
+  folderOpenCurrentButton: document.querySelector("#folderOpenCurrentButton"),
+  folderNavigatorPath: document.querySelector("#folderNavigatorPath"),
+  folderNavigatorRoots: document.querySelector("#folderNavigatorRoots"),
+  folderNavigatorRecents: document.querySelector("#folderNavigatorRecents"),
+  folderNavigatorList: document.querySelector("#folderNavigatorList"),
+  folderNavigatorStatus: document.querySelector("#folderNavigatorStatus"),
   openOtherVaultButton: document.querySelector("#openOtherVaultButton"),
   fileSearch: document.querySelector("#fileSearch"),
   fileSortSelect: document.querySelector("#fileSortSelect"),
@@ -135,7 +155,11 @@ function wireEvents() {
   elements.toggleThemeButton.addEventListener("click", toggleTheme);
   elements.collapseSidebarButton.addEventListener("click", toggleSidebar);
   elements.openOtherVaultButton.addEventListener("click", openFolder);
-  elements.vaultSelect.addEventListener("change", handleVaultSelectChange);
+  elements.vaultNavigatorButton.addEventListener("click", toggleVaultNavigator);
+  elements.folderBackButton.addEventListener("click", navigateFolderBack);
+  elements.folderForwardButton.addEventListener("click", navigateFolderForward);
+  elements.folderUpButton.addEventListener("click", navigateFolderUp);
+  elements.folderOpenCurrentButton.addEventListener("click", openCurrentNavigatorFolder);
   elements.saveButton.addEventListener("click", saveCurrentNote);
   elements.sourceText.addEventListener("input", handleSourceInput);
   elements.sourceText.addEventListener("scroll", () => {
@@ -191,6 +215,16 @@ function wireEvents() {
     }
   });
 
+  elements.vaultNavigator.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!elements.vaultNavigator.hidden && !elements.vaultSwitcher.contains(event.target)) {
+      hideVaultNavigator();
+    }
+  });
+
   elements.markdownView.addEventListener("click", handlePreviewClick);
 
   elements.viewButtons.forEach((button) => {
@@ -224,6 +258,10 @@ function wireEvents() {
 
     if (event.key === "Escape" && !elements.noteDialog.hidden) {
       hideNoteDialog();
+    }
+
+    if (event.key === "Escape" && !elements.vaultNavigator.hidden) {
+      hideVaultNavigator();
     }
 
     if (event.key === "Enter" && !elements.quickOpen.hidden) {
@@ -344,38 +382,9 @@ function persistRecentVaults() {
 }
 
 function renderVaultSwitcher() {
-  elements.vaultSelect.textContent = "";
-
-  const currentValue = state.rootPath || "__current__";
-  const currentOption = document.createElement("option");
-  currentOption.value = currentValue;
-  currentOption.textContent = state.rootPath ? state.vaultName : `${state.vaultName} (current)`;
-  elements.vaultSelect.append(currentOption);
-
-  for (const vault of state.recentVaults) {
-    if (vault.rootPath === state.rootPath) {
-      continue;
-    }
-
-    const option = document.createElement("option");
-    option.value = vault.rootPath;
-    option.textContent = vault.name;
-    option.title = vault.rootPath;
-    elements.vaultSelect.append(option);
-  }
-
-  elements.vaultSelect.value = currentValue;
-  elements.vaultSelect.title = state.rootPath || "Open a vault folder to start switching between recent vaults.";
-}
-
-async function handleVaultSelectChange(event) {
-  const rootPath = event.target.value;
-  if (!rootPath || rootPath === "__current__" || rootPath === state.rootPath) {
-    renderVaultSwitcher();
-    return;
-  }
-
-  await openVaultPath(rootPath);
+  elements.vaultNavigatorLabel.textContent = state.rootPath ? state.vaultName : `${state.vaultName} (current)`;
+  elements.vaultNavigatorButton.title = state.rootPath || "Browse folders and recent vaults.";
+  renderFolderNavigator();
 }
 
 async function openVaultPath(rootPath) {
@@ -403,6 +412,237 @@ async function openVaultPath(rootPath) {
   } finally {
     renderVaultSwitcher();
   }
+}
+
+async function toggleVaultNavigator(event) {
+  event.stopPropagation();
+  if (elements.vaultNavigator.hidden) {
+    await showVaultNavigator();
+  } else {
+    hideVaultNavigator();
+  }
+}
+
+async function showVaultNavigator() {
+  elements.vaultNavigator.hidden = false;
+  elements.vaultNavigatorButton.setAttribute("aria-expanded", "true");
+  renderFolderNavigator();
+
+  if (!state.folderNavigatorPath && !state.folderNavigatorLoading) {
+    const initialPath = state.rootPath || state.recentVaults[0]?.rootPath || null;
+    await loadFolderNavigator(initialPath, { recordHistory: true });
+  }
+}
+
+function hideVaultNavigator() {
+  elements.vaultNavigator.hidden = true;
+  elements.vaultNavigatorButton.setAttribute("aria-expanded", "false");
+}
+
+async function loadFolderNavigator(folderPath, options = {}) {
+  state.folderNavigatorLoading = true;
+  state.folderNavigatorError = "";
+  renderFolderNavigator();
+
+  try {
+    const result = await listNativeFolder(folderPath);
+    state.folderNavigatorPath = result.path;
+    state.folderNavigatorParentPath = result.parentPath || null;
+    state.folderNavigatorRoots = Array.isArray(result.roots) ? result.roots : [];
+    state.folderNavigatorFolders = Array.isArray(result.folders) ? result.folders : [];
+
+    if (options.recordHistory !== false) {
+      recordFolderHistory(result.path);
+    }
+  } catch (error) {
+    console.warn(error);
+    state.folderNavigatorError = nativeFolderBrowsingAvailable()
+      ? "Could not read this folder."
+      : "Folder browsing is available in the Windows app.";
+  } finally {
+    state.folderNavigatorLoading = false;
+    renderFolderNavigator();
+  }
+}
+
+async function listNativeFolder(folderPath) {
+  if (window.vaultReaderNative?.listFolder) {
+    return window.vaultReaderNative.listFolder(folderPath || null);
+  }
+
+  const invoke = getTauriInvoke();
+  if (invoke) {
+    return invoke("list_folder", { folderPath: folderPath || null });
+  }
+
+  throw new Error("No native folder navigator is available.");
+}
+
+function nativeFolderBrowsingAvailable() {
+  return Boolean(window.vaultReaderNative?.listFolder || getTauriInvoke());
+}
+
+function recordFolderHistory(folderPath) {
+  if (!folderPath) {
+    return;
+  }
+
+  const currentPath = state.folderNavigatorHistory[state.folderNavigatorHistoryIndex];
+  if (sameFolderPath(currentPath, folderPath)) {
+    return;
+  }
+
+  state.folderNavigatorHistory = state.folderNavigatorHistory.slice(0, state.folderNavigatorHistoryIndex + 1);
+  state.folderNavigatorHistory.push(folderPath);
+  state.folderNavigatorHistoryIndex = state.folderNavigatorHistory.length - 1;
+}
+
+async function navigateFolderBack() {
+  if (state.folderNavigatorHistoryIndex <= 0) {
+    return;
+  }
+
+  state.folderNavigatorHistoryIndex -= 1;
+  await loadFolderNavigator(state.folderNavigatorHistory[state.folderNavigatorHistoryIndex], { recordHistory: false });
+}
+
+async function navigateFolderForward() {
+  if (state.folderNavigatorHistoryIndex >= state.folderNavigatorHistory.length - 1) {
+    return;
+  }
+
+  state.folderNavigatorHistoryIndex += 1;
+  await loadFolderNavigator(state.folderNavigatorHistory[state.folderNavigatorHistoryIndex], { recordHistory: false });
+}
+
+async function navigateFolderUp() {
+  if (state.folderNavigatorParentPath) {
+    await loadFolderNavigator(state.folderNavigatorParentPath, { recordHistory: true });
+  }
+}
+
+async function openCurrentNavigatorFolder() {
+  if (!state.folderNavigatorPath) {
+    return;
+  }
+
+  await openVaultPath(state.folderNavigatorPath);
+  hideVaultNavigator();
+}
+
+async function openRecentVault(rootPath) {
+  await openVaultPath(rootPath);
+  hideVaultNavigator();
+}
+
+function renderFolderNavigator() {
+  if (!elements.folderNavigatorList) {
+    return;
+  }
+
+  elements.folderBackButton.disabled = state.folderNavigatorHistoryIndex <= 0 || state.folderNavigatorLoading;
+  elements.folderForwardButton.disabled =
+    state.folderNavigatorHistoryIndex >= state.folderNavigatorHistory.length - 1 || state.folderNavigatorLoading;
+  elements.folderUpButton.disabled = !state.folderNavigatorParentPath || state.folderNavigatorLoading;
+  elements.folderOpenCurrentButton.disabled = !state.folderNavigatorPath || state.folderNavigatorLoading;
+
+  elements.folderNavigatorPath.textContent = state.folderNavigatorPath || "No folder selected";
+  elements.folderNavigatorPath.title = state.folderNavigatorPath || "";
+  renderFolderRoots();
+  renderFolderRecents();
+  renderFolderRows();
+
+  if (state.folderNavigatorLoading) {
+    elements.folderNavigatorStatus.textContent = "Loading folders.";
+  } else if (state.folderNavigatorError) {
+    elements.folderNavigatorStatus.textContent = state.folderNavigatorError;
+  } else if (state.folderNavigatorPath) {
+    elements.folderNavigatorStatus.textContent = "Select a folder to go down, or open the current folder as a vault.";
+  } else {
+    elements.folderNavigatorStatus.textContent = "Open a vault or choose a folder.";
+  }
+
+  refreshIcons();
+}
+
+function renderFolderRoots() {
+  elements.folderNavigatorRoots.textContent = "";
+  if (!state.folderNavigatorRoots.length) {
+    return;
+  }
+
+  const heading = document.createElement("div");
+  heading.className = "folder-nav-heading";
+  heading.textContent = "Roots";
+  const roots = document.createElement("div");
+  roots.className = "folder-nav-roots";
+
+  for (const root of state.folderNavigatorRoots) {
+    const button = document.createElement("button");
+    button.className = `folder-nav-root${sameFolderPath(root.path, state.folderNavigatorPath) ? " is-active" : ""}`;
+    button.type = "button";
+    button.textContent = root.name;
+    button.title = root.path;
+    button.addEventListener("click", () => loadFolderNavigator(root.path, { recordHistory: true }));
+    roots.append(button);
+  }
+
+  elements.folderNavigatorRoots.append(heading, roots);
+}
+
+function renderFolderRecents() {
+  elements.folderNavigatorRecents.textContent = "";
+  const recents = state.recentVaults.filter((vault) => vault.rootPath && !sameFolderPath(vault.rootPath, state.rootPath));
+  if (!recents.length) {
+    return;
+  }
+
+  const heading = document.createElement("div");
+  heading.className = "folder-nav-heading";
+  heading.textContent = "Recent vaults";
+  elements.folderNavigatorRecents.append(heading);
+
+  for (const vault of recents.slice(0, 4)) {
+    const button = document.createElement("button");
+    button.className = "folder-nav-row";
+    button.type = "button";
+    button.title = vault.rootPath;
+    button.innerHTML = `<i data-lucide="folder-clock"></i><span></span><i data-lucide="corner-down-right"></i>`;
+    button.querySelector("span").textContent = vault.name;
+    button.addEventListener("click", () => openRecentVault(vault.rootPath));
+    elements.folderNavigatorRecents.append(button);
+  }
+}
+
+function renderFolderRows() {
+  elements.folderNavigatorList.textContent = "";
+
+  if (!state.folderNavigatorFolders.length) {
+    const empty = document.createElement("div");
+    empty.className = "tree-empty";
+    empty.textContent = state.folderNavigatorLoading ? "Loading folders." : "No child folders.";
+    elements.folderNavigatorList.append(empty);
+    return;
+  }
+
+  for (const folder of state.folderNavigatorFolders) {
+    const button = document.createElement("button");
+    button.className = "folder-nav-row";
+    button.type = "button";
+    button.title = folder.path;
+    button.innerHTML = `<i data-lucide="folder"></i><span></span><i data-lucide="chevron-right"></i>`;
+    button.querySelector("span").textContent = folder.name;
+    button.addEventListener("click", () => loadFolderNavigator(folder.path, { recordHistory: true }));
+    elements.folderNavigatorList.append(button);
+  }
+}
+
+function sameFolderPath(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return String(left).replace(/\\/g, "/").toLowerCase() === String(right).replace(/\\/g, "/").toLowerCase();
 }
 
 function loadStoredSidebarWidth() {

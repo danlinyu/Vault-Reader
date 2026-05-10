@@ -23,6 +23,7 @@ Vault Reader is a small, local-first Markdown note reader and editor for Windows
 - Drag the right details pane wider or narrower.
 - Hide and restore the left table of contents from the rail.
 - Switch between recent vault folders from the table of contents.
+- Browse folders from the vault navigator with back, forward, up, root, and open-current-folder controls.
 
 ## Downloads
 

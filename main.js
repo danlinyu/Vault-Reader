@@ -109,6 +109,10 @@ ipcMain.handle("vault:open-vault-path", async (_event, rootPath) => {
   return folderResult(rootPath);
 });
 
+ipcMain.handle("vault:list-folder", async (_event, folderPath) => {
+  return listFolder(folderPath);
+});
+
 ipcMain.handle("vault:read-file", async (_event, absolutePath) => {
   return fs.readFile(absolutePath, "utf8");
 });
@@ -235,6 +239,77 @@ async function folderResult(rootPath) {
     folders: Array.from(folders).sort(),
     files,
   };
+}
+
+async function listFolder(folderPath) {
+  const currentPath = await navigatorPath(folderPath);
+  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  const folders = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || SKIPPED_DIRS.has(entry.name)) {
+      continue;
+    }
+
+    const absolutePath = path.join(currentPath, entry.name);
+    folders.push({
+      name: entry.name,
+      path: absolutePath,
+    });
+  }
+
+  folders.sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base", numeric: true }));
+
+  return {
+    path: currentPath,
+    name: path.basename(currentPath) || currentPath,
+    parentPath: parentFolderPath(currentPath),
+    roots: await systemRoots(),
+    folders,
+  };
+}
+
+async function navigatorPath(folderPath) {
+  const requested = folderPath ? path.resolve(folderPath) : defaultNavigatorPath();
+  const stats = await fs.stat(requested);
+
+  if (!stats.isDirectory()) {
+    throw new Error("Navigator path is not a folder.");
+  }
+
+  return requested;
+}
+
+function defaultNavigatorPath() {
+  return process.env.USERPROFILE || process.env.HOME || app.getPath("home") || process.cwd();
+}
+
+function parentFolderPath(folderPath) {
+  const parentPath = path.dirname(folderPath);
+  return parentPath && parentPath !== folderPath ? parentPath : null;
+}
+
+async function systemRoots() {
+  if (process.platform !== "win32") {
+    return [{ name: "/", path: "/" }];
+  }
+
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+  const roots = [];
+
+  await Promise.all(letters.map(async (letter) => {
+    const rootPath = `${letter}:\\`;
+    try {
+      const stats = await fs.stat(rootPath);
+      if (stats.isDirectory()) {
+        roots.push({ name: rootPath, path: rootPath });
+      }
+    } catch {
+      // Ignore unavailable drives.
+    }
+  }));
+
+  return roots.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 async function collectMarkdownPaths(filePaths) {

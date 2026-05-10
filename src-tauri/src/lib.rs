@@ -34,6 +34,22 @@ struct FileEntry {
     is_disk: bool,
 }
 
+#[derive(Serialize)]
+struct FolderList {
+    path: String,
+    name: String,
+    #[serde(rename = "parentPath")]
+    parent_path: Option<String>,
+    roots: Vec<FolderEntry>,
+    folders: Vec<FolderEntry>,
+}
+
+#[derive(Serialize, Clone)]
+struct FolderEntry {
+    name: String,
+    path: String,
+}
+
 #[tauri::command]
 fn load_paths(paths: Vec<String>) -> Result<OpenResult, String> {
     associated_paths_result(paths)
@@ -143,6 +159,46 @@ fn open_vault_path(root_path: String) -> Result<Option<OpenResult>, String> {
 }
 
 #[tauri::command]
+fn list_folder(folder_path: Option<String>) -> Result<FolderList, String> {
+    let current_path = navigator_path(folder_path)?;
+    let mut folders = Vec::new();
+
+    for entry in fs::read_dir(&current_path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        if SKIPPED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+
+        folders.push(FolderEntry {
+            name,
+            path: entry.path().to_string_lossy().to_string(),
+        });
+    }
+
+    folders.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+
+    let name = current_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| current_path.to_string_lossy().to_string());
+
+    Ok(FolderList {
+        name,
+        parent_path: parent_folder_path(&current_path),
+        path: current_path.to_string_lossy().to_string(),
+        roots: system_roots(),
+        folders,
+    })
+}
+
+#[tauri::command]
 fn open_files() -> Result<Option<OpenResult>, String> {
     let Some(paths) = rfd::FileDialog::new()
         .set_title("Open Markdown files")
@@ -199,6 +255,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_note,
             load_paths,
+            list_folder,
             open_files,
             open_folder,
             open_vault_path,
@@ -227,6 +284,64 @@ fn markdown_args() -> Vec<String> {
         .filter(|arg| !arg.starts_with("--"))
         .filter(|arg| is_markdown_file(Path::new(arg)))
         .collect()
+}
+
+fn navigator_path(folder_path: Option<String>) -> Result<PathBuf, String> {
+    let requested = folder_path
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_navigator_path);
+
+    if !requested.is_dir() {
+        return Err("Navigator path is not a folder.".to_string());
+    }
+
+    Ok(requested)
+}
+
+fn default_navigator_path() -> PathBuf {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .ok()
+        .filter(|path| path.is_dir())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn parent_folder_path(folder_path: &Path) -> Option<String> {
+    folder_path.parent().and_then(|parent| {
+        if parent == folder_path {
+            None
+        } else {
+            Some(parent.to_string_lossy().to_string())
+        }
+    })
+}
+
+fn system_roots() -> Vec<FolderEntry> {
+    #[cfg(windows)]
+    {
+        let mut roots = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let root = format!("{}:\\", letter as char);
+            if Path::new(&root).is_dir() {
+                roots.push(FolderEntry {
+                    name: root.clone(),
+                    path: root,
+                });
+            }
+        }
+        roots
+    }
+
+    #[cfg(not(windows))]
+    {
+        vec![FolderEntry {
+            name: "/".to_string(),
+            path: "/".to_string(),
+        }]
+    }
 }
 
 fn collect_markdown_paths(paths: Vec<String>) -> Vec<PathBuf> {

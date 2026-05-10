@@ -47,13 +47,36 @@
         </header>
 
         <div class="vault-switcher" aria-label="Vault navigation">
-          <label class="vault-select-field" for="vaultSelect" title="Switch vault">
-            <i data-lucide="library"></i>
-            <select id="vaultSelect" aria-label="Switch vault"></select>
-          </label>
+          <button class="vault-navigator-button" id="vaultNavigatorButton" type="button" aria-expanded="false" aria-controls="vaultNavigator">
+            <i data-lucide="folder-tree"></i>
+            <span id="vaultNavigatorLabel">Reader</span>
+            <i data-lucide="chevron-down"></i>
+          </button>
           <button class="icon-button quiet" id="openOtherVaultButton" type="button" title="Open other vault" aria-label="Open other vault">
             <i data-lucide="folder-plus"></i>
           </button>
+          <div class="vault-navigator-popover" id="vaultNavigator" hidden>
+            <div class="folder-nav-toolbar">
+              <button class="icon-button quiet" id="folderBackButton" type="button" title="Back" aria-label="Back">
+                <i data-lucide="arrow-left"></i>
+              </button>
+              <button class="icon-button quiet" id="folderForwardButton" type="button" title="Forward" aria-label="Forward">
+                <i data-lucide="arrow-right"></i>
+              </button>
+              <button class="icon-button quiet" id="folderUpButton" type="button" title="Up" aria-label="Up">
+                <i data-lucide="corner-left-up"></i>
+              </button>
+              <button class="folder-open-current" id="folderOpenCurrentButton" type="button">
+                <i data-lucide="folder-open"></i>
+                <span>Open</span>
+              </button>
+            </div>
+            <div class="folder-nav-path" id="folderNavigatorPath">No folder selected</div>
+            <div class="folder-nav-section" id="folderNavigatorRoots"></div>
+            <div class="folder-nav-section" id="folderNavigatorRecents"></div>
+            <div class="folder-nav-list" id="folderNavigatorList" role="tree" aria-label="Folders"></div>
+            <div class="folder-nav-status" id="folderNavigatorStatus"></div>
+          </div>
         </div>
 
         <label class="search-field" for="fileSearch">
