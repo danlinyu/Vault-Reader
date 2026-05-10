@@ -17,6 +17,7 @@ Vault Reader is a small, local-first Markdown note reader and editor for Windows
 - Use quick switcher with `Ctrl+P`.
 - Toggle light/dark theme.
 - Open `.md` files from Windows "Open with" by selecting the executable.
+- Double-clicking an associated Markdown file loads the containing folder as a vault and selects that file.
 
 ## Downloads
 

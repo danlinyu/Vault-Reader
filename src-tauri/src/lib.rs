@@ -11,6 +11,8 @@ struct OpenResult {
     vault_name: String,
     #[serde(rename = "rootPath")]
     root_path: Option<String>,
+    #[serde(rename = "selectedId", skip_serializing_if = "Option::is_none")]
+    selected_id: Option<String>,
     folders: Vec<String>,
     files: Vec<FileEntry>,
 }
@@ -33,17 +35,57 @@ struct FileEntry {
 
 #[tauri::command]
 fn load_paths(paths: Vec<String>) -> Result<OpenResult, String> {
+    associated_paths_result(paths)
+}
+
+fn associated_paths_result(paths: Vec<String>) -> Result<OpenResult, String> {
+    let target_paths = collect_markdown_paths(paths);
+    if target_paths.is_empty() {
+        return Ok(empty_open_result());
+    }
+
+    let first_parent = target_paths[0].parent().map(|path| path.to_path_buf()).unwrap_or_default();
+    let same_parent = target_paths.iter().all(|path| path.parent().unwrap_or_else(|| Path::new("")) == first_parent);
+
+    if same_parent {
+        let root_path = first_parent;
+        let mut files = Vec::new();
+        let mut folders = Vec::new();
+        walk_directory(&root_path, &root_path, &mut files, &mut folders)?;
+        files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
+        folders.sort();
+        folders.dedup();
+        let selected_id = find_selected_id(&files, &target_paths[0]);
+
+        return Ok(OpenResult {
+            vault_name: root_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("Vault")
+                .to_string(),
+            root_path: Some(root_path.to_string_lossy().to_string()),
+            selected_id,
+            folders,
+            files,
+        });
+    }
+
+    selected_files_result(target_paths)
+}
+
+fn selected_files_result(paths: Vec<PathBuf>) -> Result<OpenResult, String> {
     let mut files = Vec::new();
 
-    for supplied_path in paths {
-        let absolute_path = PathBuf::from(supplied_path);
-        if absolute_path.is_file() && is_markdown_file(&absolute_path) {
-            let root = absolute_path.parent().unwrap_or_else(|| Path::new(""));
-            files.push(file_entry(&absolute_path, root)?);
-        }
+    for absolute_path in &paths {
+        let root = absolute_path.parent().unwrap_or_else(|| Path::new(""));
+        files.push(file_entry(absolute_path, root)?);
     }
 
     files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
+
+    if files.is_empty() {
+        return Ok(empty_open_result());
+    }
 
     let vault_name = if files.len() == 1 {
         strip_extension(&files[0].name)
@@ -54,6 +96,7 @@ fn load_paths(paths: Vec<String>) -> Result<OpenResult, String> {
     Ok(OpenResult {
         vault_name,
         root_path: None,
+        selected_id: find_selected_id(&files, &paths[0]),
         folders: Vec::new(),
         files,
     })
@@ -79,6 +122,7 @@ fn open_folder() -> Result<Option<OpenResult>, String> {
             .unwrap_or("Vault")
             .to_string(),
         root_path: Some(root_path.to_string_lossy().to_string()),
+        selected_id: None,
         folders,
         files,
     }))
@@ -94,7 +138,7 @@ fn open_files() -> Result<Option<OpenResult>, String> {
         return Ok(None);
     };
 
-    load_paths(paths.into_iter().map(|path| path.to_string_lossy().to_string()).collect()).map(Some)
+    selected_files_result(paths).map(Some)
 }
 
 #[tauri::command]
@@ -168,6 +212,49 @@ fn markdown_args() -> Vec<String> {
         .filter(|arg| !arg.starts_with("--"))
         .filter(|arg| is_markdown_file(Path::new(arg)))
         .collect()
+}
+
+fn collect_markdown_paths(paths: Vec<String>) -> Vec<PathBuf> {
+    let mut target_paths = Vec::new();
+    let mut seen = Vec::new();
+
+    for supplied_path in paths {
+        let absolute_path = PathBuf::from(supplied_path);
+        let key = path_key(&absolute_path);
+        if seen.contains(&key) {
+            continue;
+        }
+
+        if absolute_path.is_file() && is_markdown_file(&absolute_path) {
+            seen.push(key);
+            target_paths.push(absolute_path);
+        }
+    }
+
+    target_paths
+}
+
+fn empty_open_result() -> OpenResult {
+    OpenResult {
+        vault_name: "Loose files".to_string(),
+        root_path: None,
+        selected_id: None,
+        folders: Vec::new(),
+        files: Vec::new(),
+    }
+}
+
+fn find_selected_id(files: &[FileEntry], selected_path: &Path) -> Option<String> {
+    let selected_key = path_key(selected_path);
+    files
+        .iter()
+        .find(|file| path_key(Path::new(&file.absolute_path)) == selected_key)
+        .or_else(|| files.first())
+        .map(|file| file.id.clone())
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 
 fn file_entry(absolute_path: &Path, root_path: &Path) -> Result<FileEntry, String> {

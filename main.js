@@ -6,6 +6,21 @@ const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const SKIPPED_DIRS = new Set([".git", ".obsidian", "node_modules", ".trash"]);
 
 let mainWindow;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    sendOpenPaths(findMarkdownArgs(argv));
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -37,15 +52,17 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  createWindow();
+if (hasSingleInstanceLock) {
+  app.whenReady().then(() => {
+    createWindow();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
   });
-});
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -93,11 +110,11 @@ ipcMain.handle("vault:open-files", async () => {
     return null;
   }
 
-  return openPathsResult(result.filePaths);
+  return selectedFilesResult(result.filePaths);
 });
 
 ipcMain.handle("vault:open-paths", async (_event, filePaths) => {
-  return openPathsResult(filePaths);
+  return associatedPathsResult(filePaths);
 });
 
 ipcMain.handle("vault:read-file", async (_event, absolutePath) => {
@@ -148,7 +165,7 @@ async function sendOpenPaths(filePaths) {
   }
 
   try {
-    const result = await openPathsResult(filePaths);
+    const result = await associatedPathsResult(filePaths);
     if (result?.files?.length) {
       mainWindow.webContents.send("vault:opened-files", result);
     }
@@ -157,29 +174,93 @@ async function sendOpenPaths(filePaths) {
   }
 }
 
-async function openPathsResult(filePaths) {
+async function associatedPathsResult(filePaths) {
+  const targetPaths = await collectMarkdownPaths(filePaths);
+  if (!targetPaths.length) {
+    return emptyOpenResult();
+  }
+
+  const parentPaths = new Set(targetPaths.map((filePath) => path.dirname(filePath).toLowerCase()));
+  if (parentPaths.size === 1) {
+    const rootPath = path.dirname(targetPaths[0]);
+    const files = [];
+    const folders = new Set();
+
+    await walkDirectory(rootPath, rootPath, files, folders);
+    files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
+
+    return {
+      vaultName: path.basename(rootPath) || "Vault",
+      rootPath,
+      selectedId: findSelectedId(files, targetPaths[0]),
+      folders: Array.from(folders).sort(),
+      files,
+    };
+  }
+
+  return selectedFilesResult(targetPaths);
+}
+
+async function selectedFilesResult(filePaths) {
+  const targetPaths = await collectMarkdownPaths(filePaths);
   const files = [];
+
+  for (const absolutePath of targetPaths) {
+    files.push(await fileEntry(absolutePath, path.dirname(absolutePath)));
+  }
+
+  files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
+
+  if (!files.length) {
+    return emptyOpenResult();
+  }
+
+  return {
+    vaultName: files.length === 1 ? stripExtension(files[0].name) : "Loose files",
+    rootPath: null,
+    selectedId: findSelectedId(files, targetPaths[0]),
+    folders: [],
+    files,
+  };
+}
+
+async function collectMarkdownPaths(filePaths) {
+  const targetPaths = [];
+  const seen = new Set();
 
   for (const filePath of filePaths || []) {
     const absolutePath = path.resolve(filePath);
+    const key = absolutePath.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
     try {
       const stats = await fs.stat(absolutePath);
       if (stats.isFile() && isMarkdownFile(absolutePath)) {
-        files.push(await fileEntry(absolutePath, path.dirname(absolutePath)));
+        targetPaths.push(absolutePath);
+        seen.add(key);
       }
     } catch {
       // Ignore stale or non-file arguments passed by the shell.
     }
   }
 
-  files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
+  return targetPaths;
+}
 
+function emptyOpenResult() {
   return {
-    vaultName: files.length === 1 ? stripExtension(files[0].name) : "Loose files",
+    vaultName: "Loose files",
     rootPath: null,
     folders: [],
-    files,
+    files: [],
   };
+}
+
+function findSelectedId(files, selectedPath) {
+  const selectedKey = path.resolve(selectedPath).toLowerCase();
+  return files.find((file) => path.resolve(file.absolutePath).toLowerCase() === selectedKey)?.id || files[0]?.id || null;
 }
 
 async function walkDirectory(currentPath, rootPath, files, folders) {

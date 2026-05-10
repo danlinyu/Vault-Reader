@@ -319,7 +319,8 @@ async function loadNativeResult(result) {
   if (!result.rootPath && result.files.length > 1) {
     state.tabs = result.files.map((file) => file.id);
   }
-  await selectFile(result.files[0].id);
+  const selectedId = result.files.some((file) => file.id === result.selectedId) ? result.selectedId : result.files[0].id;
+  await selectFile(selectedId);
   indexFilesInBackground();
 }
 
