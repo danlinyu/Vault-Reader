@@ -48,12 +48,35 @@
           <input id="fileSearch" type="search" autocomplete="off" placeholder="Search notes" />
         </label>
 
+        <div class="sidebar-tools" aria-label="File list options">
+          <label class="sort-field" for="fileSortSelect" title="Sort notes">
+            <i data-lucide="arrow-up-down"></i>
+            <select id="fileSortSelect" aria-label="Sort notes">
+              <option value="name">Name</option>
+              <option value="modified">Modified</option>
+              <option value="created">Created</option>
+              <option value="size">Size</option>
+            </select>
+          </label>
+          <button class="icon-button quiet" id="sortDirectionButton" type="button" title="Sort direction" aria-label="Sort direction">
+            <i data-lucide="arrow-up"></i>
+          </button>
+        </div>
+
         <div class="sidebar-status">
           <span id="fileCount">0 notes</span>
           <span id="indexStatus">Ready</span>
         </div>
 
         <div class="file-tree" id="fileTree" role="tree" aria-label="Markdown files"></div>
+        <div
+          class="sidebar-resizer"
+          id="sidebarResizer"
+          role="separator"
+          aria-label="Resize file pane"
+          aria-orientation="vertical"
+          tabindex="0"
+        ></div>
       </aside>
 
       <main class="workspace">

@@ -21,6 +21,11 @@ console.log(reader);
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const SKIPPED_DIRS = new Set([".git", ".obsidian", "node_modules", ".trash"]);
 const POSITION_STORAGE_KEY = "vault-reader-reading-positions:v1";
+const SIDEBAR_WIDTH_STORAGE_KEY = "vault-reader-sidebar-width:v1";
+const SORT_KEY_STORAGE_KEY = "vault-reader-sort-key:v1";
+const SORT_DIRECTION_STORAGE_KEY = "vault-reader-sort-direction:v1";
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 560;
 
 const state = {
   files: [],
@@ -33,6 +38,9 @@ const state = {
   treeOpen: new Set(),
   search: "",
   quickSearch: "",
+  sortKey: normalizeSortKey(localStorage.getItem(SORT_KEY_STORAGE_KEY)),
+  sortDirection: normalizeSortDirection(localStorage.getItem(SORT_DIRECTION_STORAGE_KEY)),
+  sidebarWidth: loadStoredSidebarWidth(),
   view: "live",
   theme: localStorage.getItem("vault-reader-theme") || "light",
   vaultName: "Reader",
@@ -46,6 +54,8 @@ const state = {
 
 const elements = {
   appShell: document.querySelector("#appShell"),
+  sidebar: document.querySelector("#sidebar"),
+  sidebarResizer: document.querySelector("#sidebarResizer"),
   openFolderButton: document.querySelector("#openFolderButton"),
   openFilesButton: document.querySelector("#openFilesButton"),
   newNoteButton: document.querySelector("#newNoteButton"),
@@ -53,6 +63,8 @@ const elements = {
   toggleThemeButton: document.querySelector("#toggleThemeButton"),
   collapseSidebarButton: document.querySelector("#collapseSidebarButton"),
   fileSearch: document.querySelector("#fileSearch"),
+  fileSortSelect: document.querySelector("#fileSortSelect"),
+  sortDirectionButton: document.querySelector("#sortDirectionButton"),
   fileTree: document.querySelector("#fileTree"),
   fileCount: document.querySelector("#fileCount"),
   indexStatus: document.querySelector("#indexStatus"),
@@ -90,6 +102,8 @@ document.documentElement.dataset.theme = state.theme;
 elements.appShell.dataset.view = state.view;
 
 function boot() {
+  applySidebarWidth(state.sidebarWidth, { persist: false });
+  updateSortControls();
   wireEvents();
   wireNativeOpenEvents();
   syncThemeButton();
@@ -114,7 +128,7 @@ function wireEvents() {
   elements.markdownView.addEventListener("input", handleLiveInput);
   elements.markdownView.addEventListener("keydown", handleLiveKeydown);
   elements.markdownView.addEventListener("paste", handleLivePaste);
-  window.addEventListener("resize", handleLiveLineNumberResize);
+  window.addEventListener("resize", handleWindowResize);
   elements.noteForm.addEventListener("submit", handleNoteCreate);
   elements.noteCancelButton.addEventListener("click", hideNoteDialog);
 
@@ -125,6 +139,20 @@ function wireEvents() {
     state.search = event.target.value.trim().toLowerCase();
     renderFileTree();
   });
+
+  elements.fileSortSelect.addEventListener("change", (event) => {
+    state.sortKey = normalizeSortKey(event.target.value);
+    state.sortDirection = defaultSortDirection(state.sortKey);
+    persistSortState();
+    updateSortControls();
+    renderFileTree();
+    renderQuickResults();
+    refreshIcons();
+  });
+
+  elements.sortDirectionButton.addEventListener("click", toggleSortDirection);
+  elements.sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
+  elements.sidebarResizer.addEventListener("keydown", handleSidebarResizeKeydown);
 
   elements.quickSearch.addEventListener("input", (event) => {
     state.quickSearch = event.target.value.trim().toLowerCase();
@@ -207,6 +235,130 @@ function refreshIcons() {
   if (window.lucide) {
     window.lucide.createIcons();
   }
+}
+
+function normalizeSortKey(value) {
+  return ["name", "modified", "created", "size"].includes(value) ? value : "name";
+}
+
+function normalizeSortDirection(value) {
+  return value === "desc" ? "desc" : "asc";
+}
+
+function defaultSortDirection(sortKey) {
+  return ["modified", "created", "size"].includes(sortKey) ? "desc" : "asc";
+}
+
+function persistSortState() {
+  localStorage.setItem(SORT_KEY_STORAGE_KEY, state.sortKey);
+  localStorage.setItem(SORT_DIRECTION_STORAGE_KEY, state.sortDirection);
+}
+
+function updateSortControls() {
+  elements.fileSortSelect.value = state.sortKey;
+  const ascending = state.sortDirection === "asc";
+  const title = sortDirectionLabel();
+  elements.sortDirectionButton.title = title;
+  elements.sortDirectionButton.setAttribute("aria-label", title);
+  elements.sortDirectionButton.innerHTML = `<i data-lucide="${ascending ? "arrow-up" : "arrow-down"}"></i>`;
+}
+
+function sortDirectionLabel() {
+  if (state.sortKey === "modified" || state.sortKey === "created") {
+    return state.sortDirection === "desc" ? "Newest first" : "Oldest first";
+  }
+
+  if (state.sortKey === "size") {
+    return state.sortDirection === "desc" ? "Largest first" : "Smallest first";
+  }
+
+  return state.sortDirection === "desc" ? "Z to A" : "A to Z";
+}
+
+function toggleSortDirection() {
+  state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+  persistSortState();
+  updateSortControls();
+  renderFileTree();
+  renderQuickResults();
+  refreshIcons();
+}
+
+function handleWindowResize() {
+  handleLiveLineNumberResize();
+  updateSidebarResizeAria();
+}
+
+function loadStoredSidebarWidth() {
+  const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  return clampSidebarWidth(Number.isFinite(stored) ? stored : 288);
+}
+
+function applySidebarWidth(width, options = {}) {
+  const nextWidth = clampSidebarWidth(width);
+  state.sidebarWidth = nextWidth;
+  elements.appShell.style.setProperty("--sidebar-width", `${nextWidth}px`);
+
+  if (options.persist !== false) {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
+  }
+
+  updateSidebarResizeAria();
+}
+
+function beginSidebarResize(event) {
+  if (elements.appShell.classList.contains("sidebar-collapsed") || window.matchMedia("(max-width: 820px)").matches) {
+    return;
+  }
+
+  event.preventDefault();
+  elements.appShell.classList.add("is-resizing-sidebar");
+  elements.sidebarResizer.setPointerCapture?.(event.pointerId);
+
+  const handlePointerMove = (moveEvent) => {
+    const sidebarLeft = elements.sidebar.getBoundingClientRect().left;
+    applySidebarWidth(moveEvent.clientX - sidebarLeft);
+  };
+
+  const handlePointerUp = () => {
+    elements.appShell.classList.remove("is-resizing-sidebar");
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerUp);
+  };
+
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerup", handlePointerUp);
+  window.addEventListener("pointercancel", handlePointerUp);
+  handlePointerMove(event);
+}
+
+function handleSidebarResizeKeydown(event) {
+  const step = event.shiftKey ? 40 : 16;
+
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    applySidebarWidth(state.sidebarWidth - step);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    applySidebarWidth(state.sidebarWidth + step);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    applySidebarWidth(SIDEBAR_MIN_WIDTH);
+  } else if (event.key === "End") {
+    event.preventDefault();
+    applySidebarWidth(SIDEBAR_MAX_WIDTH);
+  }
+}
+
+function updateSidebarResizeAria() {
+  elements.sidebarResizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN_WIDTH));
+  elements.sidebarResizer.setAttribute("aria-valuemax", String(SIDEBAR_MAX_WIDTH));
+  elements.sidebarResizer.setAttribute("aria-valuenow", String(state.sidebarWidth));
+}
+
+function clampSidebarWidth(width) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
 }
 
 function loadSample() {
@@ -393,6 +545,7 @@ async function walkDirectory(directoryHandle, prefix, files, folders) {
         handle,
         text: null,
         size: null,
+        created: null,
         modified: null,
         isSample: false,
       });
@@ -1269,7 +1422,7 @@ function buildTree(files) {
 
 function renderTreeNode(node, container, parentPath) {
   const sortedDirs = Array.from(node.dirs.values()).sort((left, right) => left.name.localeCompare(right.name));
-  const sortedFiles = node.files.sort((left, right) => left.name.localeCompare(right.name));
+  const sortedFiles = sortFilesForDisplay(node.files);
 
   for (const directory of sortedDirs) {
     const isOpen = state.search || state.treeOpen.has(directory.path);
@@ -1316,15 +1469,72 @@ function renderTreeNode(node, container, parentPath) {
 }
 
 function getVisibleFiles(query) {
+  const files = state.files;
+
   if (!query) {
-    return state.files;
+    return sortFilesForDisplay(files);
   }
 
-  return state.files.filter((file) => {
+  return sortFilesForDisplay(files.filter((file) => {
     const pathMatch = file.path.toLowerCase().includes(query);
     const textMatch = typeof file.text === "string" && file.text.toLowerCase().includes(query);
     return pathMatch || textMatch;
+  }));
+}
+
+function sortFilesForDisplay(files) {
+  return [...files].sort(compareFiles);
+}
+
+function compareFiles(left, right) {
+  let result = 0;
+
+  if (state.sortKey === "modified") {
+    result = compareNullableNumber(left.modified, right.modified, state.sortDirection);
+  } else if (state.sortKey === "created") {
+    result = compareNullableNumber(left.created, right.created, state.sortDirection);
+  } else if (state.sortKey === "size") {
+    result = compareNullableNumber(left.size, right.size, state.sortDirection);
+  } else {
+    result = compareText(left.title || left.name, right.title || right.name, state.sortDirection);
+  }
+
+  if (result !== 0) {
+    return result;
+  }
+
+  return compareText(left.path || left.name, right.path || right.name, "asc");
+}
+
+function compareText(left, right, direction) {
+  const result = String(left || "").localeCompare(String(right || ""), undefined, {
+    sensitivity: "base",
+    numeric: true,
   });
+
+  return direction === "desc" ? -result : result;
+}
+
+function compareNullableNumber(left, right, direction) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  const leftHasValue = Number.isFinite(leftNumber) && leftNumber > 0;
+  const rightHasValue = Number.isFinite(rightNumber) && rightNumber > 0;
+
+  if (leftHasValue && !rightHasValue) {
+    return -1;
+  }
+
+  if (!leftHasValue && rightHasValue) {
+    return 1;
+  }
+
+  if (!leftHasValue && !rightHasValue) {
+    return 0;
+  }
+
+  const result = leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
+  return direction === "desc" ? -result : result;
 }
 
 function renderQuickResults() {
