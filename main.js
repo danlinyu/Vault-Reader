@@ -81,19 +81,7 @@ ipcMain.handle("vault:open-folder", async () => {
   }
 
   const rootPath = result.filePaths[0];
-  const files = [];
-  const folders = new Set();
-
-  await walkDirectory(rootPath, rootPath, files, folders);
-
-  files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
-
-  return {
-    vaultName: path.basename(rootPath),
-    rootPath,
-    folders: Array.from(folders).sort(),
-    files,
-  };
+  return folderResult(rootPath);
 });
 
 ipcMain.handle("vault:open-files", async () => {
@@ -115,6 +103,10 @@ ipcMain.handle("vault:open-files", async () => {
 
 ipcMain.handle("vault:open-paths", async (_event, filePaths) => {
   return associatedPathsResult(filePaths);
+});
+
+ipcMain.handle("vault:open-vault-path", async (_event, rootPath) => {
+  return folderResult(rootPath);
 });
 
 ipcMain.handle("vault:read-file", async (_event, absolutePath) => {
@@ -220,6 +212,27 @@ async function selectedFilesResult(filePaths) {
     rootPath: null,
     selectedId: findSelectedId(files, targetPaths[0]),
     folders: [],
+    files,
+  };
+}
+
+async function folderResult(rootPath) {
+  const absoluteRoot = path.resolve(rootPath);
+  const stats = await fs.stat(absoluteRoot);
+  if (!stats.isDirectory()) {
+    throw new Error("Vault path is not a folder.");
+  }
+
+  const files = [];
+  const folders = new Set();
+
+  await walkDirectory(absoluteRoot, absoluteRoot, files, folders);
+  files.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: "base" }));
+
+  return {
+    vaultName: path.basename(absoluteRoot) || "Vault",
+    rootPath: absoluteRoot,
+    folders: Array.from(folders).sort(),
     files,
   };
 }

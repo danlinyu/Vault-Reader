@@ -103,11 +103,10 @@ fn selected_files_result(paths: Vec<PathBuf>) -> Result<OpenResult, String> {
     })
 }
 
-#[tauri::command]
-fn open_folder() -> Result<Option<OpenResult>, String> {
-    let Some(root_path) = rfd::FileDialog::new().set_title("Open Markdown folder").pick_folder() else {
-        return Ok(None);
-    };
+fn folder_result(root_path: PathBuf) -> Result<OpenResult, String> {
+    if !root_path.is_dir() {
+        return Err("Vault path is not a folder.".to_string());
+    }
 
     let mut files = Vec::new();
     let mut folders = Vec::new();
@@ -116,7 +115,7 @@ fn open_folder() -> Result<Option<OpenResult>, String> {
     folders.sort();
     folders.dedup();
 
-    Ok(Some(OpenResult {
+    Ok(OpenResult {
         vault_name: root_path
             .file_name()
             .and_then(|value| value.to_str())
@@ -126,7 +125,21 @@ fn open_folder() -> Result<Option<OpenResult>, String> {
         selected_id: None,
         folders,
         files,
-    }))
+    })
+}
+
+#[tauri::command]
+fn open_folder() -> Result<Option<OpenResult>, String> {
+    let Some(root_path) = rfd::FileDialog::new().set_title("Open Markdown folder").pick_folder() else {
+        return Ok(None);
+    };
+
+    folder_result(root_path).map(Some)
+}
+
+#[tauri::command]
+fn open_vault_path(root_path: String) -> Result<Option<OpenResult>, String> {
+    folder_result(PathBuf::from(root_path)).map(Some)
 }
 
 #[tauri::command]
@@ -188,6 +201,7 @@ pub fn run() {
             load_paths,
             open_files,
             open_folder,
+            open_vault_path,
             read_file,
             write_file
         ])

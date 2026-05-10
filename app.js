@@ -22,10 +22,15 @@ const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const SKIPPED_DIRS = new Set([".git", ".obsidian", "node_modules", ".trash"]);
 const POSITION_STORAGE_KEY = "vault-reader-reading-positions:v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "vault-reader-sidebar-width:v1";
+const INSPECTOR_WIDTH_STORAGE_KEY = "vault-reader-inspector-width:v1";
 const SORT_KEY_STORAGE_KEY = "vault-reader-sort-key:v1";
 const SORT_DIRECTION_STORAGE_KEY = "vault-reader-sort-direction:v1";
+const RECENT_VAULTS_STORAGE_KEY = "vault-reader-recent-vaults:v1";
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 560;
+const INSPECTOR_MIN_WIDTH = 230;
+const INSPECTOR_MAX_WIDTH = 520;
+const RECENT_VAULT_LIMIT = 12;
 
 const state = {
   files: [],
@@ -41,6 +46,8 @@ const state = {
   sortKey: normalizeSortKey(localStorage.getItem(SORT_KEY_STORAGE_KEY)),
   sortDirection: normalizeSortDirection(localStorage.getItem(SORT_DIRECTION_STORAGE_KEY)),
   sidebarWidth: loadStoredSidebarWidth(),
+  inspectorWidth: loadStoredInspectorWidth(),
+  recentVaults: loadStoredRecentVaults(),
   view: "live",
   theme: localStorage.getItem("vault-reader-theme") || "light",
   vaultName: "Reader",
@@ -56,12 +63,17 @@ const elements = {
   appShell: document.querySelector("#appShell"),
   sidebar: document.querySelector("#sidebar"),
   sidebarResizer: document.querySelector("#sidebarResizer"),
+  inspector: document.querySelector("#inspector"),
+  inspectorResizer: document.querySelector("#inspectorResizer"),
   openFolderButton: document.querySelector("#openFolderButton"),
   openFilesButton: document.querySelector("#openFilesButton"),
   newNoteButton: document.querySelector("#newNoteButton"),
   quickOpenButton: document.querySelector("#quickOpenButton"),
+  showSidebarButton: document.querySelector("#showSidebarButton"),
   toggleThemeButton: document.querySelector("#toggleThemeButton"),
   collapseSidebarButton: document.querySelector("#collapseSidebarButton"),
+  vaultSelect: document.querySelector("#vaultSelect"),
+  openOtherVaultButton: document.querySelector("#openOtherVaultButton"),
   fileSearch: document.querySelector("#fileSearch"),
   fileSortSelect: document.querySelector("#fileSortSelect"),
   sortDirectionButton: document.querySelector("#sortDirectionButton"),
@@ -103,7 +115,10 @@ elements.appShell.dataset.view = state.view;
 
 function boot() {
   applySidebarWidth(state.sidebarWidth, { persist: false });
+  applyInspectorWidth(state.inspectorWidth, { persist: false });
+  elements.showSidebarButton.hidden = true;
   updateSortControls();
+  renderVaultSwitcher();
   wireEvents();
   wireNativeOpenEvents();
   syncThemeButton();
@@ -116,8 +131,11 @@ function wireEvents() {
   elements.openFilesButton.addEventListener("click", openFiles);
   elements.newNoteButton.addEventListener("click", showNoteDialog);
   elements.quickOpenButton.addEventListener("click", showQuickOpen);
+  elements.showSidebarButton.addEventListener("click", () => setSidebarCollapsed(false));
   elements.toggleThemeButton.addEventListener("click", toggleTheme);
   elements.collapseSidebarButton.addEventListener("click", toggleSidebar);
+  elements.openOtherVaultButton.addEventListener("click", openFolder);
+  elements.vaultSelect.addEventListener("change", handleVaultSelectChange);
   elements.saveButton.addEventListener("click", saveCurrentNote);
   elements.sourceText.addEventListener("input", handleSourceInput);
   elements.sourceText.addEventListener("scroll", () => {
@@ -153,6 +171,8 @@ function wireEvents() {
   elements.sortDirectionButton.addEventListener("click", toggleSortDirection);
   elements.sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
   elements.sidebarResizer.addEventListener("keydown", handleSidebarResizeKeydown);
+  elements.inspectorResizer.addEventListener("pointerdown", beginInspectorResize);
+  elements.inspectorResizer.addEventListener("keydown", handleInspectorResizeKeydown);
 
   elements.quickSearch.addEventListener("input", (event) => {
     state.quickSearch = event.target.value.trim().toLowerCase();
@@ -287,6 +307,102 @@ function toggleSortDirection() {
 function handleWindowResize() {
   handleLiveLineNumberResize();
   updateSidebarResizeAria();
+  updateInspectorResizeAria();
+}
+
+function loadStoredRecentVaults() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_VAULTS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((vault) => vault && typeof vault.rootPath === "string" && typeof vault.name === "string")
+      .slice(0, RECENT_VAULT_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function rememberVault(rootPath, name) {
+  if (!rootPath) {
+    return;
+  }
+
+  const key = rootPath.toLowerCase();
+  const nextVault = { rootPath, name: name || rootPath.split(/[\\/]/).filter(Boolean).pop() || "Vault" };
+  state.recentVaults = [
+    nextVault,
+    ...state.recentVaults.filter((vault) => vault.rootPath.toLowerCase() !== key),
+  ].slice(0, RECENT_VAULT_LIMIT);
+  persistRecentVaults();
+}
+
+function persistRecentVaults() {
+  localStorage.setItem(RECENT_VAULTS_STORAGE_KEY, JSON.stringify(state.recentVaults));
+}
+
+function renderVaultSwitcher() {
+  elements.vaultSelect.textContent = "";
+
+  const currentValue = state.rootPath || "__current__";
+  const currentOption = document.createElement("option");
+  currentOption.value = currentValue;
+  currentOption.textContent = state.rootPath ? state.vaultName : `${state.vaultName} (current)`;
+  elements.vaultSelect.append(currentOption);
+
+  for (const vault of state.recentVaults) {
+    if (vault.rootPath === state.rootPath) {
+      continue;
+    }
+
+    const option = document.createElement("option");
+    option.value = vault.rootPath;
+    option.textContent = vault.name;
+    option.title = vault.rootPath;
+    elements.vaultSelect.append(option);
+  }
+
+  elements.vaultSelect.value = currentValue;
+  elements.vaultSelect.title = state.rootPath || "Open a vault folder to start switching between recent vaults.";
+}
+
+async function handleVaultSelectChange(event) {
+  const rootPath = event.target.value;
+  if (!rootPath || rootPath === "__current__" || rootPath === state.rootPath) {
+    renderVaultSwitcher();
+    return;
+  }
+
+  await openVaultPath(rootPath);
+}
+
+async function openVaultPath(rootPath) {
+  try {
+    let result = null;
+
+    if (window.vaultReaderNative?.openVaultPath) {
+      result = await window.vaultReaderNative.openVaultPath(rootPath);
+    } else {
+      const invoke = getTauriInvoke();
+      if (invoke) {
+        result = await invoke("open_vault_path", { rootPath });
+      }
+    }
+
+    if (result?.files?.length) {
+      await loadNativeResult(result);
+      return;
+    }
+
+    setIndexStatus("Open failed");
+  } catch (error) {
+    console.warn(error);
+    setIndexStatus("Open failed");
+  } finally {
+    renderVaultSwitcher();
+  }
 }
 
 function loadStoredSidebarWidth() {
@@ -359,6 +475,78 @@ function updateSidebarResizeAria() {
 
 function clampSidebarWidth(width) {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+function loadStoredInspectorWidth() {
+  const stored = Number(localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY));
+  return clampInspectorWidth(Number.isFinite(stored) ? stored : 286);
+}
+
+function applyInspectorWidth(width, options = {}) {
+  const nextWidth = clampInspectorWidth(width);
+  state.inspectorWidth = nextWidth;
+  elements.appShell.style.setProperty("--inspector-width", `${nextWidth}px`);
+
+  if (options.persist !== false) {
+    localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(nextWidth));
+  }
+
+  updateInspectorResizeAria();
+}
+
+function beginInspectorResize(event) {
+  if (window.matchMedia("(max-width: 1180px)").matches) {
+    return;
+  }
+
+  event.preventDefault();
+  elements.appShell.classList.add("is-resizing-inspector");
+  elements.inspectorResizer.setPointerCapture?.(event.pointerId);
+
+  const handlePointerMove = (moveEvent) => {
+    const inspectorRight = elements.inspector.getBoundingClientRect().right;
+    applyInspectorWidth(inspectorRight - moveEvent.clientX);
+  };
+
+  const handlePointerUp = () => {
+    elements.appShell.classList.remove("is-resizing-inspector");
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerUp);
+  };
+
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerup", handlePointerUp);
+  window.addEventListener("pointercancel", handlePointerUp);
+  handlePointerMove(event);
+}
+
+function handleInspectorResizeKeydown(event) {
+  const step = event.shiftKey ? 40 : 16;
+
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    applyInspectorWidth(state.inspectorWidth + step);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    applyInspectorWidth(state.inspectorWidth - step);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    applyInspectorWidth(INSPECTOR_MIN_WIDTH);
+  } else if (event.key === "End") {
+    event.preventDefault();
+    applyInspectorWidth(INSPECTOR_MAX_WIDTH);
+  }
+}
+
+function updateInspectorResizeAria() {
+  elements.inspectorResizer.setAttribute("aria-valuemin", String(INSPECTOR_MIN_WIDTH));
+  elements.inspectorResizer.setAttribute("aria-valuemax", String(INSPECTOR_MAX_WIDTH));
+  elements.inspectorResizer.setAttribute("aria-valuenow", String(state.inspectorWidth));
+}
+
+function clampInspectorWidth(width) {
+  return Math.min(INSPECTOR_MAX_WIDTH, Math.max(INSPECTOR_MIN_WIDTH, Math.round(width)));
 }
 
 function loadSample() {
@@ -622,6 +810,7 @@ function replaceFiles(files, vaultName, folders, rootPath = null) {
   state.search = "";
   state.quickSearch = "";
   state.indexed = false;
+  rememberVault(rootPath, state.vaultName);
   elements.fileSearch.value = "";
   setIndexStatus("Ready");
   renderAll();
@@ -1373,6 +1562,7 @@ function isTableSeparatorLine(line) {
 function renderAll() {
   elements.vaultName.textContent = state.vaultName;
   elements.fileCount.textContent = `${state.files.length} ${state.files.length === 1 ? "note" : "notes"}`;
+  renderVaultSwitcher();
   renderFileTree();
   renderTabs();
   renderQuickResults();
@@ -2072,9 +2262,13 @@ function syncThemeButton() {
 }
 
 function toggleSidebar() {
-  elements.appShell.classList.toggle("sidebar-collapsed");
-  const isCollapsed = elements.appShell.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
+}
+
+function setSidebarCollapsed(isCollapsed) {
+  elements.appShell.classList.toggle("sidebar-collapsed", isCollapsed);
   elements.collapseSidebarButton.innerHTML = `<i data-lucide="${isCollapsed ? "panel-left-open" : "panel-left-close"}"></i>`;
+  elements.showSidebarButton.hidden = !isCollapsed;
   refreshIcons();
 }
 
